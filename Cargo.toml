@@ -1,0 +1,11 @@
+[package]
+name = "bitcoin_transfer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.75"
+axum = "0.7.2"
+bdk = { version = "0.28.1", features = ["all-keys", "key-value-db",  "rpc"] }
+serde_json = "1.0.108"
+tokio = { version = "1.35.0", features = ["full"] }
