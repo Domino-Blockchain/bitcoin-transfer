@@ -4,8 +4,34 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.75"
-axum = "0.7.2"
-bdk = { version = "0.28.1", features = ["all-keys", "key-value-db",  "rpc"] }
+anyhow = "1.0.80"
+axum = "0.7.4"
+bdk = { version = "0.29.0", features = ["all-keys", "key-value-db", "rpc"] }
+reqwest = { version = "0.11.24", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.108"
-tokio = { version = "1.35.0", features = ["full"] }
+# tokio = { version = "~1.14.1", features = ["full"], package = "tokio" }
+tokio = { version = "1.36.0", features = ["full"] }
+
+
+# spl-token-cli = { path = "../domichain-program-library/token/cli/src/main.rs" }
+
+# For: src/spl_token_cli_lib.rs
+# domichain-sdk = { path = "../domichain/sdk" }
+# spl-token = { version = "3.5", path = "../domichain-program-library/token/program", features = [
+#     "no-entrypoint",
+# ] }
+# spl-token-2022 = { version = "0.6", path = "../domichain-program-library/token/program-2022", features = [
+#     "no-entrypoint",
+# ] }
+# spl-token-btci = { version = "3.5", path = "../domichain-program-library/token/program-btci", features = [
+#     "no-entrypoint",
+# ] }
+# spl-token-client = { version = "0.4", path = "../domichain-program-library/token/client" }
+# spl-associated-token-account = { version = "1.1", path = "../domichain-program-library/associated-token-account/program", features = [
+#     "no-entrypoint",
+# ] }
+# spl-memo = { version = "3.0.1", path = "../domichain-program-library/memo/program", features = [
+#     "no-entrypoint",
+# ] }
+domichain-program = { path = "../domichain/sdk/program" }
