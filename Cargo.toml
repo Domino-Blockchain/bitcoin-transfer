@@ -10,8 +10,12 @@ bdk = { version = "0.29.0", features = ["all-keys", "key-value-db", "rpc"] }
 reqwest = { version = "0.11.24", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.108"
-# tokio = { version = "~1.14.1", features = ["full"], package = "tokio" }
 tokio = { version = "1.36.0", features = ["full"] }
+
+domichain-program = { path = "../domichain/sdk/program" }
+clap = { version = "4.5.1", features = ["cargo"] }
+ron = { git = "https://github.com/ron-rs/ron.git" }
+tower-http = { version = "0.5.2", features = ["cors"] }
 
 
 # spl-token-cli = { path = "../domichain-program-library/token/cli/src/main.rs" }
@@ -34,4 +38,3 @@ tokio = { version = "1.36.0", features = ["full"] }
 # spl-memo = { version = "3.0.1", path = "../domichain-program-library/memo/program", features = [
 #     "no-entrypoint",
 # ] }
-domichain-program = { path = "../domichain/sdk/program" }

@@ -7,6 +7,7 @@ use std::process::Stdio;
 use std::str::FromStr;
 use std::time::Instant;
 
+use axum::http::{self, HeaderValue, Method};
 use axum::routing::post;
 use axum::Json;
 use axum::{routing::get, Router};
@@ -26,7 +27,11 @@ use bdk::{
     miniscript, Balance, KeychainKind, SignOptions, SyncOptions, TransactionDetails, Wallet,
 };
 use domichain_program::pubkey::Pubkey;
+use ron::extensions::Extensions;
+use ron::Options;
+use serde::Deserialize;
 use serde_json::json;
+use tower_http::cors::CorsLayer;
 
 use crate::balance_by_addresses::{get_balance_by_address, get_known_addresses};
 
@@ -116,18 +121,25 @@ async fn main() {
         .route(
             "/check_destination_balance",
             post(check_destination_balance),
+        )
+        .layer(
+            CorsLayer::new()
+                .allow_origin("http://193.107.109.22:3000".parse::<HeaderValue>().unwrap())
+                .allow_methods([Method::GET, Method::POST])
+                .allow_headers(vec![http::header::CONTENT_TYPE]),
         );
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
     println!("listening on http://{}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
 
+const SPL_TOKEN_CLI_PATH: &str =
+    "/home/zotho/DOMI/BUILD_VERIFY_3/domichain-program-library/target_0/release/spl-token";
+
 fn spl_token(args: &[&str]) -> serde_json::Value {
     // TODO: use spl-token library to create token
-    let mut c = std::process::Command::new(
-        "/home/zotho/DOMI/BUILD_VERIFY_3/domichain-program-library/target_0/release/spl-token",
-    );
+    let mut c = std::process::Command::new(SPL_TOKEN_CLI_PATH);
     let command = c
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -137,45 +149,62 @@ fn spl_token(args: &[&str]) -> serde_json::Value {
     let o = command.spawn().unwrap().wait_with_output().unwrap();
     let stdout = o.stdout;
     let stderr = o.stderr;
-    if !stdout.is_empty() {
-        println!("stdout = {}", String::from_utf8_lossy(&stdout));
-    }
+    // if !stdout.is_empty() {
+    //     println!("stdout = {}", String::from_utf8_lossy(&stdout));
+    // }
     if !stderr.is_empty() {
-        println!("stderr = {}", String::from_utf8_lossy(&stderr));
+        let stderr = String::from_utf8_lossy(&stderr);
+        println!("stderr = {stderr}");
+        // let stderr = stderr
+        //     .trim()
+        //     .strip_prefix("Error: Client(Error ")
+        //     .unwrap()
+        //     .strip_suffix(")")
+        //     .unwrap();
+        // println!("stderr = {stderr:?}");
+        // let options = Options::default().with_default_extension(Extensions::EXPLICIT_STRUCT_NAMES);
+        // let stderr: ron::Value = match options.from_str(&stderr) {
+        //     Ok(val) => val,
+        //     Err(err) => {
+        //         stderr.lines().for_each(|line| {
+        //             dbg!(line.get(err.position.col - 10..err.position.col + 10));
+        //         });
+        //         dbg!(&err);
+        //         panic!("ERR: {err:?}");
+        //     }
+        // };
+        // println!(
+        //     "stderr = {}",
+        //     ron::ser::to_string_pretty(&stderr, ron::ser::PrettyConfig::default()).unwrap(),
+        // );
     }
     serde_json::Value::from_str(std::str::from_utf8(&stdout).unwrap()).unwrap()
 }
 
 fn spl_token_plain(args: &[&str]) {
     // TODO: use spl-token library to create token
-    let mut c = std::process::Command::new(
-        "/home/zotho/DOMI/BUILD_VERIFY_3/domichain-program-library/target_0/release/spl-token",
-    );
+    let mut c = std::process::Command::new(SPL_TOKEN_CLI_PATH);
     let command = c.stdout(Stdio::piped()).stderr(Stdio::piped()).args(args);
     let o = command.spawn().unwrap().wait_with_output().unwrap();
     let stdout = o.stdout;
     let stderr = o.stderr;
-    if !stdout.is_empty() {
-        println!("stdout = {}", String::from_utf8_lossy(&stdout));
-    }
+    // if !stdout.is_empty() {
+    //     println!("stdout = {}", String::from_utf8_lossy(&stdout));
+    // }
     if !stderr.is_empty() {
         println!("stderr = {}", String::from_utf8_lossy(&stderr));
     }
 }
 
-async fn mint_token() -> Json<Vec<serde_json::Value>> {
-    let mut out = Vec::new();
-    let create_token_result = spl_token(&["create-token", "--decimals", "8", "--output", "json"]);
-    let token_address = create_token_result["commandOutput"]["address"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    out.push(create_token_result);
-
-    let token_program_id = Pubkey::from_str("7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s").unwrap();
-    let associated_token_program_id = Pubkey::from_str("Dt8fRCpjeV6JDemhPmtcTKijgKdPxXHn9Wo9cXY5agtG").unwrap();
-    let owner = Pubkey::from_str("Fk2HRYuDw9h29yKs1tNDjvjdvYMqQ2dGg9sS4JhUzQ6w").unwrap();
-    let mint = Pubkey::from_str(&token_address).unwrap();
+async fn get_account_address(token_address: Pubkey) -> Pubkey {
+    let token_program_id =
+        Pubkey::from_str("7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s").unwrap();
+    let associated_token_program_id =
+        Pubkey::from_str("Dt8fRCpjeV6JDemhPmtcTKijgKdPxXHn9Wo9cXY5agtG").unwrap();
+    // owner == Fk2HRYuDw9h29yKs1tNDjvjdvYMqQ2dGg9sS4JhUzQ6w
+    let owner =
+        Pubkey::from_str(spl_token(&["address"])["walletAddress"].as_str().unwrap()).unwrap();
+    let mint = token_address;
     /*
     const TOKEN_PROGRAM_ID = new PublicKey('7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s');
     const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('Dt8fRCpjeV6JDemhPmtcTKijgKdPxXHn9Wo9cXY5agtG');
@@ -186,26 +215,54 @@ async fn mint_token() -> Json<Vec<serde_json::Value>> {
         [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
         ASSOCIATED_TOKEN_PROGRAM_ID
     );
-     */
+    */
 
-    let res = Pubkey::find_program_address(&[owner.as_ref(), token_program_id.as_ref(), mint.as_ref()], &associated_token_program_id);
-    dbg!(res);
-    out.push(json!(res.0.to_string()));
+    let (pubkey, _bump_seed) = Pubkey::find_program_address(
+        &[owner.as_ref(), token_program_id.as_ref(), mint.as_ref()],
+        &associated_token_program_id,
+    );
+    pubkey
+}
 
-    // let create_account_result = spl_token(&["create-account", &token_address]);
-    // out.push(create_account_result);
+#[derive(Deserialize)]
+struct MintTokenRequest {
+    amount: u64,
+}
+async fn mint_token(Json(request): Json<MintTokenRequest>) -> Json<Vec<serde_json::Value>> {
+    let mut out = Vec::new();
+    let create_token_result = spl_token(&["create-token", "--decimals", "8"]);
+    let token_address = create_token_result["commandOutput"]["address"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    out.push(create_token_result);
 
-    // let mint_result = spl_token(&["mint", &token_address, "300"]);
-    // out.push(mint_result);
+    let account_address = get_account_address(Pubkey::from_str(&token_address).unwrap()).await;
+    out.push(json!({
+        "accountAddress": account_address.to_string(),
+    }));
 
-    spl_token_plain(&["create-account", &token_address]);
-    spl_token_plain(&["mint", &token_address, "300"]);
+    out.push(spl_token(&["create-account", &token_address]));
+    out.push(spl_token(&[
+        "mint",
+        &token_address,
+        &request.amount.to_string(),
+    ]));
 
     Json(out)
 }
 
-async fn burn_token(Json(account_address): Json<String>) -> Json<serde_json::Value> {
-    Json(spl_token(&["burn", &account_address, "300"]))
+#[derive(Deserialize)]
+struct BurnTokenRequest {
+    account_address: String,
+    amount: u64,
+}
+async fn burn_token(Json(request): Json<BurnTokenRequest>) -> Json<serde_json::Value> {
+    Json(spl_token(&[
+        "burn",
+        &request.account_address,
+        &request.amount.to_string(),
+    ]))
 }
 
 async fn check_balance() -> Json<Balance> {

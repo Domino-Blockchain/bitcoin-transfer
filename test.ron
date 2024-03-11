@@ -1,0 +1,48 @@
+// Data (
+//     request: Some(-8),
+//     code: -32002,
+//     kind: RpcError(RpcResponseError (
+//         code: -32002,
+//         message: "Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1",
+//         data: SendTransactionPreflightFailure(
+//             RpcSimulateTransactionResult (
+//                 err: Some(InstructionError(0, Custom(1))),
+//                 logs: Some([
+//                     "Program 7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s invoke [1]",
+//                     "Program log: Instruction: BurnChecked", 
+//                     "Program log: Error: insufficient funds", 
+//                     "Program 7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s consumed 0 of 200000 compute units",
+//                     "Program 7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s failed: custom program error: 0x1"
+//                 ]),
+//                 accounts: None,
+//                 units_consumed: Some(0),
+//                 return_data: None
+//             )
+//         ),
+//     )),
+// )
+
+
+
+Client(
+    Error (
+        request: Some(SendTransaction),
+        kind: RpcError(RpcResponseError (
+            code: -32002,
+            message: "Transaction simulation failed: Error processing Instruction 0: custom program error: 0x1",
+            data: SendTransactionPreflightFailure(RpcSimulateTransactionResult (
+                err: Some(InstructionError(0, Custom(1))),
+                logs: Some([
+                    "Program 7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s invoke [1]",
+                    "Program log: Instruction: BurnChecked",
+                    "Program log: Error: insufficient funds",
+                    "Program 7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s consumed 0 of 200000 compute units",
+                    "Program 7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s failed: custom program error: 0x1",
+                ]),
+                accounts: None,
+                units_consumed: Some(0),
+                return_data: None
+            ))
+        ))
+    )
+)
