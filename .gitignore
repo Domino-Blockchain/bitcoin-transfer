@@ -1,1 +1,6 @@
 /target
+multi_descriptor_*.json
+xpriv_*.json
+onesig_psbt.json
+secondsig_psbt.json
+.env

@@ -17,6 +17,10 @@ clap = { version = "4.5.1", features = ["cargo"] }
 ron = { git = "https://github.com/ron-rs/ron.git" }
 tower-http = { version = "0.5.2", features = ["cors"] }
 
+aws-config = { version = "1.1.7", features = ["behavior-version-latest"] }
+aws-sdk-kms = "1.15.0"
+base64 = "0.22.0"
+crypto-hash = "0.3.4"
 
 # spl-token-cli = { path = "../domichain-program-library/token/cli/src/main.rs" }
 
