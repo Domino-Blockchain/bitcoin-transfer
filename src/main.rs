@@ -27,6 +27,7 @@ use bdk::{
     miniscript, Balance, KeychainKind, SignOptions, SyncOptions, TransactionDetails, Wallet,
 };
 use domichain_program::pubkey::Pubkey;
+use kms_sign::load_dotenv;
 use ron::extensions::Extensions;
 use ron::Options;
 use serde::Deserialize;
@@ -109,6 +110,11 @@ fn _main_btc() {
 
 #[tokio::main]
 async fn main() {
+    load_dotenv();
+
+    let allow_origin = std::env::var("ALLOW_ORIGIN")
+        .unwrap_or_else(|_| "http://devnet.domichain.io:3000".to_string());
+
     let app = Router::new()
         .route(
             "/get_address",
@@ -124,7 +130,7 @@ async fn main() {
         )
         .layer(
             CorsLayer::new()
-                .allow_origin("http://193.107.109.22:3000".parse::<HeaderValue>().unwrap())
+                .allow_origin(allow_origin.parse::<HeaderValue>().unwrap())
                 .allow_methods([Method::GET, Method::POST])
                 .allow_headers(vec![http::header::CONTENT_TYPE]),
         );

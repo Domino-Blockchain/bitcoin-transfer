@@ -10,13 +10,15 @@ echo
 export CHANGE_ID=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 policies | jq -r ".external.id")
 
 # to send TX
-export TO_ADDRESS="tb1qjk7wqccmetsngh9e0zff73rhsqny568g5fs758"
-export UNSIGNED_PSBT=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 create_tx --send_all --to $TO_ADDRESS:0 --external_policy "{\"$CHANGE_ID\": [0,1]}" | jq -r '.psbt')
+export TO_ADDRESS="tb1qjk7wqccmetsngh9e0zff73rhsqny568g5fs758" # UniSat test wallet
+export AMOUNT="550" # More than dust limit
+echo "Sending $AMOUNT sat to $TO_ADDRESS"
+echo
+export UNSIGNED_PSBT=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 create_tx --to $TO_ADDRESS:$AMOUNT --external_policy "{\"$CHANGE_ID\": [0,1]}" | jq -r '.psbt')
 
 env | grep UNSIGNED
 echo
 
-bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sign --psbt $UNSIGNED_PSBT
 export ONESIG_PSBT=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sign --psbt $UNSIGNED_PSBT | jq -r '.psbt')
 
 env | grep ONESIG

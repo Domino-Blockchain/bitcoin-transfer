@@ -21,6 +21,15 @@ aws-config = { version = "1.1.7", features = ["behavior-version-latest"] }
 aws-sdk-kms = "1.15.0"
 base64 = "0.22.0"
 crypto-hash = "0.3.4"
+env-file-reader = "0.3.0"
+toml = "0.8.11"
+home = "0.5.9"
+x509-certificate = "0.18.0"
+openssl = "0.10.64"
+asn1 = "0.16.1"
+hex = "0.4.3"
+kms_sign = { path = "multisig_scripts/kms_sign" }
+
 
 # spl-token-cli = { path = "../domichain-program-library/token/cli/src/main.rs" }
 

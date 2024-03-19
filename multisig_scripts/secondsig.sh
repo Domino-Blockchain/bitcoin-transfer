@@ -4,9 +4,9 @@ source "$(dirname "$(realpath "$0")")/check_dependencies.sh"
 
 export MULTI_DESCRIPTOR_01=$(cat multi_descriptor_01.json)
 export ONESIG_PSBT=$(cat onesig_psbt.json)
+export KEY_ARN="arn:aws:kms:us-east-2:571922870935:key/17be5d9e-d752-4350-bbc1-68993fa25a4f"
 
-bdk-cli wallet --wallet wallet_name_msd01 --descriptor $MULTI_DESCRIPTOR_01 sign --psbt $ONESIG_PSBT
-export SECONDSIG_PSBT=$(bdk-cli wallet --wallet wallet_name_msd01 --descriptor $MULTI_DESCRIPTOR_01 sign --psbt $ONESIG_PSBT | jq -r '.psbt')
+export SECONDSIG_PSBT=$(./bdk-cli/target/release/bdk-cli wallet --aws_kms $KEY_ARN --wallet wallet_name_msd01 --descriptor $MULTI_DESCRIPTOR_01 sign --psbt $ONESIG_PSBT | jq -r '.psbt')
 
 if [ "$ONESIG_PSBT" = "$SECONDSIG_PSBT" ]; then
   echo "ERROR: Secondsig don't change PSBT"

@@ -10,3 +10,7 @@ ld -lsqlite3 -o /dev/null 2> /dev/null || { echo "package 'libsqlite3-dev' is no
 
 # Install bdk-cli in case we dont have it
 bdk-cli --version || cargo install bdk-cli --features=compiler,electrum
+
+export RUSTFLAGS="-Awarnings" # Remove warnings
+cargo build --release --manifest-path ~/bitcoin-transfer/Cargo.toml
+cargo build --release --manifest-path ~/bitcoin-transfer/multisig_scripts/bdk-cli/Cargo.toml
