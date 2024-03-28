@@ -1,12 +1,14 @@
 // mod spl_token_cli_lib;
 
 mod balance_by_addresses;
+mod db;
 mod log_progress;
 
 use std::process::Stdio;
 use std::str::FromStr;
-use std::time::Instant;
+use std::sync::Arc;
 
+use axum::extract::State;
 use axum::http::{self, HeaderValue, Method};
 use axum::routing::post;
 use axum::Json;
@@ -28,13 +30,12 @@ use bdk::{
 };
 use domichain_program::pubkey::Pubkey;
 use kms_sign::load_dotenv;
-use ron::extensions::Extensions;
-use ron::Options;
 use serde::Deserialize;
 use serde_json::json;
 use tower_http::cors::CorsLayer;
 
 use crate::balance_by_addresses::{get_balance_by_address, get_known_addresses};
+use crate::db::DB;
 
 // e:0:tb1q6dsqge320xzu7g64d5arp4qx6ldvz6xd27zvgy:0
 // e:1:tb1qsvsqza56mdcmp8d02ttq06grdrcjmtcnxd08pf:779
@@ -108,6 +109,17 @@ fn _main_btc() {
     println!("Descriptor balance: {} SAT", wallet.get_balance().unwrap());
 }
 
+#[derive(Clone)]
+struct AppState {
+    db: Arc<DB>,
+}
+
+impl AppState {
+    fn new(db: Arc<DB>) -> Self {
+        Self { db }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     load_dotenv();
@@ -115,11 +127,15 @@ async fn main() {
     let allow_origin = std::env::var("ALLOW_ORIGIN")
         .unwrap_or_else(|_| "http://devnet.domichain.io:3000".to_string());
 
+    DB::test().await.unwrap();
+    let db = DB::new().await;
+
     let app = Router::new()
         .route(
             "/get_address",
             post(|| async { Json(get_new_service_address().await.to_string()) }),
         )
+        .route("/get_address_from_db", post(get_address_from_db))
         .route("/check_balance", post(check_balance))
         .route("/mint_token", post(mint_token))
         .route("/burn_token", post(burn_token))
@@ -133,19 +149,18 @@ async fn main() {
                 .allow_origin(allow_origin.parse::<HeaderValue>().unwrap())
                 .allow_methods([Method::GET, Method::POST])
                 .allow_headers(vec![http::header::CONTENT_TYPE]),
-        );
+        )
+        .with_state(AppState { db: db.into() });
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
     println!("listening on http://{}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
 
-const SPL_TOKEN_CLI_PATH: &str =
-    "/home/zotho/DOMI/BUILD_VERIFY_3/domichain-program-library/target_0/release/spl-token";
-
 fn spl_token(args: &[&str]) -> serde_json::Value {
     // TODO: use spl-token library to create token
-    let mut c = std::process::Command::new(SPL_TOKEN_CLI_PATH);
+    let cli_path = std::env::var("SPL_TOKEN_CLI_PATH").unwrap();
+    let mut c = std::process::Command::new(&cli_path);
     let command = c
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -189,7 +204,8 @@ fn spl_token(args: &[&str]) -> serde_json::Value {
 
 fn spl_token_plain(args: &[&str]) {
     // TODO: use spl-token library to create token
-    let mut c = std::process::Command::new(SPL_TOKEN_CLI_PATH);
+    let cli_path = std::env::var("SPL_TOKEN_CLI_PATH").unwrap();
+    let mut c = std::process::Command::new(cli_path);
     let command = c.stdout(Stdio::piped()).stderr(Stdio::piped()).args(args);
     let o = command.spawn().unwrap().wait_with_output().unwrap();
     let stdout = o.stdout;
@@ -203,6 +219,8 @@ fn spl_token_plain(args: &[&str]) {
 }
 
 async fn get_account_address(token_address: Pubkey) -> Pubkey {
+    // DWallet: 5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ
+
     let token_program_id =
         Pubkey::from_str("7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s").unwrap();
     let associated_token_program_id =
@@ -232,9 +250,11 @@ async fn get_account_address(token_address: Pubkey) -> Pubkey {
 
 #[derive(Deserialize)]
 struct MintTokenRequest {
-    amount: u64,
+    amount: String,
+    address: String,
 }
-async fn mint_token(Json(request): Json<MintTokenRequest>) -> Json<Vec<serde_json::Value>> {
+
+async fn mint_token(Json(request): Json<MintTokenRequest>) -> Json<serde_json::Value> {
     let mut out = Vec::new();
     let create_token_result = spl_token(&["create-token", "--decimals", "8"]);
     let token_address = create_token_result["commandOutput"]["address"]
@@ -249,13 +269,28 @@ async fn mint_token(Json(request): Json<MintTokenRequest>) -> Json<Vec<serde_jso
     }));
 
     out.push(spl_token(&["create-account", &token_address]));
+    out.push(spl_token(&["mint", &token_address, &request.amount]));
+    // Disable mint
     out.push(spl_token(&[
-        "mint",
+        "authorize",
         &token_address,
-        &request.amount.to_string(),
+        "mint",
+        "--disable",
+    ]));
+    // Send BTCi token
+    out.push(spl_token(&[
+        "transfer",
+        &token_address,
+        &request.amount,
+        "5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ",
+        "--allow-unfunded-recipient",
+        "--fund-recipient",
     ]));
 
-    Json(out)
+    Json(json!({
+        "mint_address": token_address.clone(),
+        "account_address": account_address.to_string(),
+    }))
 }
 
 #[derive(Deserialize)]
@@ -391,4 +426,8 @@ async fn send_btc_to_user() -> Json<TransactionDetails> {
     blockchain.broadcast(&tx).unwrap();
 
     Json(details)
+}
+
+async fn get_address_from_db(State(state): State<AppState>) -> Json<String> {
+    Json(state.db.get_address().await)
 }

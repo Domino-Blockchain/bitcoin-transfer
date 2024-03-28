@@ -1,6 +1,9 @@
 /target
+
 multi_descriptor_*.json
 xpriv_*.json
 onesig_psbt.json
 secondsig_psbt.json
+aws_keys.json
+
 .env
