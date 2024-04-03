@@ -68,6 +68,24 @@ pub async fn sign(digest: Vec<u8>) -> Result<Vec<u8>, kms::Error> {
     Ok(signature)
 }
 
+pub fn parse_asn_pubkey<'a>(pk: &'a [u8]) -> asn1::ParseResult<&'a [u8]> {
+    asn1::parse(&pk, |d| {
+        return d.read_element::<asn1::Sequence>()?.parse(|d| {
+            d.read_element::<asn1::Sequence>()?
+                .parse(|d| {
+                    d.read_element::<asn1::ObjectIdentifier>().unwrap();
+                    d.read_element::<asn1::ObjectIdentifier>().unwrap();
+                    asn1::ParseResult::Ok(())
+                })
+                .unwrap();
+            let s = d.read_element::<asn1::BitString>()?;
+            assert!(d.is_empty());
+            return Ok(s);
+        });
+    })
+    .map(|bit_string| bit_string.as_bytes())
+}
+
 pub async fn get_pubkey() -> Result<Vec<u8>, kms::Error> {
     let key_arn = std::env::var("KEY_ARN").unwrap();
 
@@ -81,22 +99,7 @@ pub async fn get_pubkey() -> Result<Vec<u8>, kms::Error> {
         .await?;
     let pk = res.public_key.unwrap().into_inner();
 
-    let result: asn1::ParseResult<_> = asn1::parse(&pk, |d| {
-        return d.read_element::<asn1::Sequence>()?.parse(|d| {
-            d.read_element::<asn1::Sequence>()?
-                .parse(|d| {
-                    d.read_element::<asn1::ObjectIdentifier>().unwrap();
-                    d.read_element::<asn1::ObjectIdentifier>().unwrap();
-                    asn1::ParseResult::Ok(())
-                })
-                .unwrap();
-            let s = d.read_element::<asn1::BitString>()?;
-            assert!(d.is_empty());
-            return Ok(s);
-        });
-    });
-
-    let pk = result.unwrap().as_bytes().to_vec();
+    let pk = parse_asn_pubkey(&pk).unwrap().to_vec();
     Ok(pk)
 }
 

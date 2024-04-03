@@ -2,20 +2,23 @@
 
 mod balance_by_addresses;
 mod db;
+mod get_address;
+mod get_mint_info;
 mod log_progress;
+mod mint_token;
+mod sign_multisig_tx;
+mod spl_token;
+mod watch_tx;
+mod bdk_cli;
 
-use std::process::Stdio;
-use std::str::FromStr;
 use std::sync::Arc;
 
-use axum::extract::State;
 use axum::http::{self, HeaderValue, Method};
 use axum::routing::post;
 use axum::Json;
-use axum::{routing::get, Router};
+use axum::Router;
 use bdk::bitcoin::{Address, Network};
-use bdk::bitcoincore_rpc::RawTx;
-use bdk::blockchain::{Blockchain, ElectrumBlockchain, GetHeight};
+use bdk::blockchain::{Blockchain, ElectrumBlockchain};
 use bdk::database::MemoryDatabase;
 use bdk::electrum_client::Client;
 use bdk::keys::{
@@ -23,19 +26,22 @@ use bdk::keys::{
     DerivableKey, ExtendedKey, GeneratableKey, GeneratedKey,
 };
 use bdk::template::Bip84;
-use bdk::wallet::AddressIndex::{self, LastUnused, New, Peek};
-use bdk::wallet::AddressInfo;
+use bdk::wallet::AddressIndex::{LastUnused, Peek};
 use bdk::{
     miniscript, Balance, KeychainKind, SignOptions, SyncOptions, TransactionDetails, Wallet,
 };
-use domichain_program::pubkey::Pubkey;
 use kms_sign::load_dotenv;
 use serde::Deserialize;
-use serde_json::json;
 use tower_http::cors::CorsLayer;
 
-use crate::balance_by_addresses::{get_balance_by_address, get_known_addresses};
+use crate::balance_by_addresses::get_known_addresses;
 use crate::db::DB;
+use crate::get_address::get_address_from_db;
+use crate::get_mint_info::get_mint_info;
+use crate::mint_token::mint_token;
+use crate::sign_multisig_tx::sign_multisig_tx;
+use crate::spl_token::spl_token;
+use crate::watch_tx::watch_tx;
 
 // e:0:tb1q6dsqge320xzu7g64d5arp4qx6ldvz6xd27zvgy:0
 // e:1:tb1qsvsqza56mdcmp8d02ttq06grdrcjmtcnxd08pf:779
@@ -61,54 +67,6 @@ fn mnemonic_from_entropy(entropy: [u8; 32]) -> GeneratedKey<Mnemonic, miniscript
     Mnemonic::generate_with_entropy((WordCount::Words12, Language::English), entropy).unwrap()
 }
 
-fn _main_btc() {
-    let network = Network::Testnet; // Or this can be Network::Bitcoin, Network::Signet or Network::Regtest
-
-    // Generate fresh mnemonic
-    let mnemonic = mnemonic_from_entropy(SERVICE_ADDRESS);
-    // Convert mnemonic to string
-    let mnemonic_words = mnemonic.to_string();
-    // Parse a mnemonic
-    let mnemonic = Mnemonic::parse(&mnemonic_words).unwrap();
-    // Generate the extended key
-    let xkey: ExtendedKey = mnemonic.into_extended_key().unwrap();
-    // Get xprv from the extended key
-    let xprv = xkey.into_xprv(network).unwrap();
-
-    // tb1qedg9fdlf8cnnqfd5mks6uz5w4kgpk2pr6y4qc7
-    // let key = bitcoin::util::bip32::ExtendedPubKey::from_str("tpubDC2Qwo2TFsaNC4ju8nrUJ9mqVT3eSgdmy1yPqhgkjwmke3PRXutNGRYAUo6RCHTcVQaDR3ohNU9we59brGHuEKPvH1ags2nevW5opEE9Z5Q").unwrap();
-    // let fingerprint = bitcoin::util::bip32::Fingerprint::from_str("c55b303a").unwrap();
-
-    // Create a BDK wallet structure using BIP 84 descriptor ("m/84h/1h/0h/0" and "m/84h/1h/0h/1")
-    let wallet = Wallet::new(
-        // Bip84Public(key.clone(), fingerprint, KeychainKind::External),
-        // Some(Bip84Public(key, fingerprint, KeychainKind::Internal)),
-        Bip84(xprv, KeychainKind::External),
-        Some(Bip84(xprv, KeychainKind::Internal)),
-        network,
-        MemoryDatabase::default(),
-    )
-    .unwrap();
-
-    let client = Client::new("ssl://electrum.blockstream.info:60002").unwrap();
-    let blockchain = ElectrumBlockchain::from(client);
-    wallet.sync(&blockchain, SyncOptions::default()).unwrap();
-
-    println!(
-        "mnemonic: {}\n\nrecv desc (pub key): {:#?}\n\nchng desc (pub key): {:#?}",
-        mnemonic_words,
-        wallet
-            .get_descriptor_for_keychain(KeychainKind::External)
-            .to_string(),
-        wallet
-            .get_descriptor_for_keychain(KeychainKind::Internal)
-            .to_string()
-    );
-
-    println!("Address #0: {}", wallet.get_address(New).unwrap());
-    println!("Descriptor balance: {} SAT", wallet.get_balance().unwrap());
-}
-
 #[derive(Clone)]
 struct AppState {
     db: Arc<DB>,
@@ -127,7 +85,7 @@ async fn main() {
     let allow_origin = std::env::var("ALLOW_ORIGIN")
         .unwrap_or_else(|_| "http://devnet.domichain.io:3000".to_string());
 
-    DB::test().await.unwrap();
+    // DB::test().await.unwrap();
     let db = DB::new().await;
 
     let app = Router::new()
@@ -136,6 +94,9 @@ async fn main() {
             post(|| async { Json(get_new_service_address().await.to_string()) }),
         )
         .route("/get_address_from_db", post(get_address_from_db))
+        .route("/watch_tx", post(watch_tx))
+        .route("/get_mint_info", post(get_mint_info))
+        .route("/sign_multisig_tx", post(sign_multisig_tx))
         .route("/check_balance", post(check_balance))
         .route("/mint_token", post(mint_token))
         .route("/burn_token", post(burn_token))
@@ -150,147 +111,11 @@ async fn main() {
                 .allow_methods([Method::GET, Method::POST])
                 .allow_headers(vec![http::header::CONTENT_TYPE]),
         )
-        .with_state(AppState { db: db.into() });
+        .with_state(AppState::new(db.into()));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
     println!("listening on http://{}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
-}
-
-fn spl_token(args: &[&str]) -> serde_json::Value {
-    // TODO: use spl-token library to create token
-    let cli_path = std::env::var("SPL_TOKEN_CLI_PATH").unwrap();
-    let mut c = std::process::Command::new(&cli_path);
-    let command = c
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .arg("--output")
-        .arg("json")
-        .args(args);
-    let o = command.spawn().unwrap().wait_with_output().unwrap();
-    let stdout = o.stdout;
-    let stderr = o.stderr;
-    // if !stdout.is_empty() {
-    //     println!("stdout = {}", String::from_utf8_lossy(&stdout));
-    // }
-    if !stderr.is_empty() {
-        let stderr = String::from_utf8_lossy(&stderr);
-        println!("stderr = {stderr}");
-        // let stderr = stderr
-        //     .trim()
-        //     .strip_prefix("Error: Client(Error ")
-        //     .unwrap()
-        //     .strip_suffix(")")
-        //     .unwrap();
-        // println!("stderr = {stderr:?}");
-        // let options = Options::default().with_default_extension(Extensions::EXPLICIT_STRUCT_NAMES);
-        // let stderr: ron::Value = match options.from_str(&stderr) {
-        //     Ok(val) => val,
-        //     Err(err) => {
-        //         stderr.lines().for_each(|line| {
-        //             dbg!(line.get(err.position.col - 10..err.position.col + 10));
-        //         });
-        //         dbg!(&err);
-        //         panic!("ERR: {err:?}");
-        //     }
-        // };
-        // println!(
-        //     "stderr = {}",
-        //     ron::ser::to_string_pretty(&stderr, ron::ser::PrettyConfig::default()).unwrap(),
-        // );
-    }
-    serde_json::Value::from_str(std::str::from_utf8(&stdout).unwrap()).unwrap()
-}
-
-fn spl_token_plain(args: &[&str]) {
-    // TODO: use spl-token library to create token
-    let cli_path = std::env::var("SPL_TOKEN_CLI_PATH").unwrap();
-    let mut c = std::process::Command::new(cli_path);
-    let command = c.stdout(Stdio::piped()).stderr(Stdio::piped()).args(args);
-    let o = command.spawn().unwrap().wait_with_output().unwrap();
-    let stdout = o.stdout;
-    let stderr = o.stderr;
-    // if !stdout.is_empty() {
-    //     println!("stdout = {}", String::from_utf8_lossy(&stdout));
-    // }
-    if !stderr.is_empty() {
-        println!("stderr = {}", String::from_utf8_lossy(&stderr));
-    }
-}
-
-async fn get_account_address(token_address: Pubkey) -> Pubkey {
-    // DWallet: 5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ
-
-    let token_program_id =
-        Pubkey::from_str("7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s").unwrap();
-    let associated_token_program_id =
-        Pubkey::from_str("Dt8fRCpjeV6JDemhPmtcTKijgKdPxXHn9Wo9cXY5agtG").unwrap();
-    // owner == Fk2HRYuDw9h29yKs1tNDjvjdvYMqQ2dGg9sS4JhUzQ6w
-    let owner =
-        Pubkey::from_str(spl_token(&["address"])["walletAddress"].as_str().unwrap()).unwrap();
-    let mint = token_address;
-    /*
-    const TOKEN_PROGRAM_ID = new PublicKey('7t5SuBhmxxKuQyjwTnmPpFpqJurCDM4dvM14nUGiza4s');
-    const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('Dt8fRCpjeV6JDemhPmtcTKijgKdPxXHn9Wo9cXY5agtG');
-    const owner = new PublicKey('Fk2HRYuDw9h29yKs1tNDjvjdvYMqQ2dGg9sS4JhUzQ6w');
-    const mint = new PublicKey('9bLgyijGKGrKHfT72JUQZNgEH4GVTuHosk3VcdpHYo19');
-
-    const [address] = await PublicKey.findProgramAddress(
-        [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
-        ASSOCIATED_TOKEN_PROGRAM_ID
-    );
-    */
-
-    let (pubkey, _bump_seed) = Pubkey::find_program_address(
-        &[owner.as_ref(), token_program_id.as_ref(), mint.as_ref()],
-        &associated_token_program_id,
-    );
-    pubkey
-}
-
-#[derive(Deserialize)]
-struct MintTokenRequest {
-    amount: String,
-    address: String,
-}
-
-async fn mint_token(Json(request): Json<MintTokenRequest>) -> Json<serde_json::Value> {
-    let mut out = Vec::new();
-    let create_token_result = spl_token(&["create-token", "--decimals", "8"]);
-    let token_address = create_token_result["commandOutput"]["address"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    out.push(create_token_result);
-
-    let account_address = get_account_address(Pubkey::from_str(&token_address).unwrap()).await;
-    out.push(json!({
-        "accountAddress": account_address.to_string(),
-    }));
-
-    out.push(spl_token(&["create-account", &token_address]));
-    out.push(spl_token(&["mint", &token_address, &request.amount]));
-    // Disable mint
-    out.push(spl_token(&[
-        "authorize",
-        &token_address,
-        "mint",
-        "--disable",
-    ]));
-    // Send BTCi token
-    out.push(spl_token(&[
-        "transfer",
-        &token_address,
-        &request.amount,
-        "5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ",
-        "--allow-unfunded-recipient",
-        "--fund-recipient",
-    ]));
-
-    Json(json!({
-        "mint_address": token_address.clone(),
-        "account_address": account_address.to_string(),
-    }))
 }
 
 #[derive(Deserialize)]
@@ -426,8 +251,4 @@ async fn send_btc_to_user() -> Json<TransactionDetails> {
     blockchain.broadcast(&tx).unwrap();
 
     Json(details)
-}
-
-async fn get_address_from_db(State(state): State<AppState>) -> Json<String> {
-    Json(state.db.get_address().await)
 }

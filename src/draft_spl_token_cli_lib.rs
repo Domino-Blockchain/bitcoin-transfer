@@ -1,3 +1,7 @@
+// WIP
+// THIS IS A DRAFT OF SPL_TOKEN CLI INTEGRATION
+// NOT INCLUDED TO PROJECT MODULES
+
 use domichain_sdk::{
     native_token::*,
     program_option::COption,

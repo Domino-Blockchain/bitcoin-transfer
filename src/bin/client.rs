@@ -73,13 +73,13 @@ async fn main() -> anyhow::Result<()> {
     let service = Service::new(addr);
 
     match matches.subcommand() {
-        Some(("get_address", sub_matches)) => {
+        Some(("get_address", _sub_matches)) => {
             println!("{}", service.post::<String>("/get_address").await?);
         }
-        Some(("check_balance", sub_matches)) => {
+        Some(("check_balance", _sub_matches)) => {
             println!("{:#?}", service.post::<Balance>("/check_balance").await?);
         }
-        Some(("check_destination_balance", sub_matches)) => {
+        Some(("check_destination_balance", _sub_matches)) => {
             println!(
                 "{:#?}",
                 service
@@ -108,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
             println!("{}", serde_json::to_string_pretty(&data)?);
         }
-        Some(("send_btc_to_user", sub_matches)) => {
+        Some(("send_btc_to_user", _sub_matches)) => {
             println!(
                 "{:#?}",
                 service

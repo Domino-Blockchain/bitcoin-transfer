@@ -11,7 +11,6 @@ pub fn log_progress() -> LogProgress {
 
 impl Progress for LogProgress {
     fn update(&self, progress: f32, message: Option<String>) -> Result<(), Error> {
-        panic!();
         eprintln!(
             "Sync {:.3}%: `{}`",
             progress,

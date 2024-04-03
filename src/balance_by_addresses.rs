@@ -1,16 +1,13 @@
-use std::{
-    cell::{Ref, RefCell},
-    collections::HashMap,
-    rc::Rc,
-};
+use std::
+    collections::HashMap
+;
 
 use bdk::{
-    bitcoin::{bip32::ExtendedPrivKey, constants::COINBASE_MATURITY, Address, Network},
+    bitcoin::{constants::COINBASE_MATURITY, Address},
     blockchain::{ElectrumBlockchain, GetHeight},
-    database::{BatchDatabase, Database, MemoryDatabase},
-    template::Bip84,
+    database::MemoryDatabase,
     wallet::{
-        AddressIndex::{self, LastUnused, New, Peek},
+        AddressIndex::{LastUnused, Peek},
         AddressInfo,
     },
     Balance, Error, KeychainKind, Wallet,
