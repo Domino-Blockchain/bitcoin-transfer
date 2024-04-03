@@ -20,7 +20,10 @@ TODO:
 
 - Install libmongocrypt https://www.mongodb.com/docs/manual/core/csfle/reference/libmongocrypt/
 ```sh
-# setup key
+# Get info about BTC KMS keys
+python get_aws_keys.py > kms_keys.json
+
+# setup mongodb key
 cargo run --bin generate_master_key
 
 # btc_ui
