@@ -18,6 +18,7 @@ pub fn spl_token(args: &[&str]) -> serde_json::Value {
     //     println!("stdout = {}", String::from_utf8_lossy(&stdout));
     // }
     if !stderr.is_empty() {
+        eprintln!("args = {args:?}");
         let stderr = String::from_utf8_lossy(&stderr);
         eprintln!("stderr = {stderr}");
         // let stderr = stderr

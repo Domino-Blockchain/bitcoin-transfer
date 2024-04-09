@@ -1,5 +1,5 @@
 use axum::{extract::State, Json};
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Document};
 use primitive_types::U256;
 use serde::{Deserialize, Serialize};
 use serde_json::from_value;
@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     bdk_cli::{bdk_cli, bdk_cli_wallet},
-    AppState,
+    serde_convert, AppState,
 };
 
 /*
@@ -46,8 +46,7 @@ pub async fn get_pubkey(xprv: &str) -> GetPubkeyResult {
 pub async fn new_multisig_address(state: &AppState) -> String {
     let key_00 = generate_key().await;
 
-    let to_save_encrypted =
-        serde_json::from_str(serde_json::to_string(&key_00).unwrap().as_str()).unwrap();
+    let to_save_encrypted: Document = serde_convert(&key_00);
 
     // Hardcoded hardware key
     let key_02 = GenerateKeyResult {

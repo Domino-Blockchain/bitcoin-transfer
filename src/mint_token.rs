@@ -3,11 +3,10 @@ use std::str::FromStr;
 use axum::Json;
 use domichain_program::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use crate::spl_token;
 
-async fn get_account_address(token_address: Pubkey) -> Pubkey {
+pub fn get_account_address(token_address: Pubkey) -> Pubkey {
     // DWallet: 5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ
 
     let token_program_id = Pubkey::from_str("TokenAAGbeQq5tGW2r5RoR3oauzN2EkNFiHNPw9q34s").unwrap();
@@ -62,7 +61,7 @@ pub async fn mint_token_inner(amount: &str, address: &str) -> anyhow::Result<Min
         .to_string();
     out.push(create_token_result);
 
-    let account_address = get_account_address(Pubkey::from_str(&token_address).unwrap()).await;
+    let account_address = get_account_address(Pubkey::from_str(&token_address).unwrap());
 
     out.push(spl_token(&["create-account", &token_address]));
     out.push(spl_token(&["mint", &token_address, amount]));

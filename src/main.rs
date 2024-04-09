@@ -1,6 +1,7 @@
 // mod spl_token_cli_lib;
 
 mod balance_by_addresses;
+mod bdk_cli;
 mod db;
 mod get_address;
 mod get_mint_info;
@@ -8,10 +9,11 @@ mod log_progress;
 mod mint_token;
 mod sign_multisig_tx;
 mod spl_token;
+mod watch_addresses;
 mod watch_tx;
-mod bdk_cli;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::http::{self, HeaderValue, Method};
 use axum::routing::post;
@@ -31,7 +33,9 @@ use bdk::{
     miniscript, Balance, KeychainKind, SignOptions, SyncOptions, TransactionDetails, Wallet,
 };
 use kms_sign::load_dotenv;
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use tokio::time::sleep;
 use tower_http::cors::CorsLayer;
 
 use crate::balance_by_addresses::get_known_addresses;
@@ -41,6 +45,7 @@ use crate::get_mint_info::get_mint_info;
 use crate::mint_token::mint_token;
 use crate::sign_multisig_tx::sign_multisig_tx;
 use crate::spl_token::spl_token;
+use crate::watch_addresses::watch_addresses;
 use crate::watch_tx::watch_tx;
 
 // e:0:tb1q6dsqge320xzu7g64d5arp4qx6ldvz6xd27zvgy:0
@@ -86,7 +91,23 @@ async fn main() {
         .unwrap_or_else(|_| "http://devnet.domichain.io:3000".to_string());
 
     // DB::test().await.unwrap();
-    let db = DB::new().await;
+    let db = Arc::new(DB::new().await);
+    let db_clone = Arc::clone(&db);
+
+    let ws_handle = tokio::spawn(async move {
+        let all_multisig_addresses = db_clone.get_all_multisig_addresses().await;
+        dbg!(&all_multisig_addresses);
+        dbg!(all_multisig_addresses.len());
+        // vec!["tb1qalaejg4ve63htr8pxfr9l76cq8qqq52pgrevwy2vdqywsxlxegesh0mh6n"]
+
+        for (i, chunk) in all_multisig_addresses.chunks(10).enumerate() {
+            let chunk: Vec<_> = chunk.into_iter().cloned().collect();
+            tokio::spawn(async move {
+                watch_addresses(chunk, i).await;
+            });
+            sleep(Duration::from_secs(2)).await;
+        }
+    });
 
     let app = Router::new()
         .route(
@@ -113,9 +134,11 @@ async fn main() {
         )
         .with_state(AppState::new(db.into()));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
     println!("listening on http://{}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
+
+    ws_handle.await.unwrap();
 }
 
 #[derive(Deserialize)]
@@ -251,4 +274,13 @@ async fn send_btc_to_user() -> Json<TransactionDetails> {
     blockchain.broadcast(&tx).unwrap();
 
     Json(details)
+}
+
+pub fn serde_convert<F, T>(a: F) -> T
+where
+    F: Serialize,
+    T: DeserializeOwned,
+{
+    let string = serde_json::to_string(&a).unwrap();
+    serde_json::from_str(&string).unwrap()
 }

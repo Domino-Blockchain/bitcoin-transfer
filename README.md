@@ -20,6 +20,10 @@ TODO:
 
 - Install libmongocrypt https://www.mongodb.com/docs/manual/core/csfle/reference/libmongocrypt/
 ```sh
+# Create AWS KMS keys
+# Edit `aws_kms_policy.json` file with admin user instead `user@company.com`
+python create_aws_keys.py
+
 # Get info about BTC KMS keys
 python get_aws_keys.py > kms_keys.json
 

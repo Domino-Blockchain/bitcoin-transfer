@@ -1,0 +1,22 @@
+{
+    "btc": {
+        "keys": {
+            "private_key_00": "enc(key:encryption_btc, \"{fingerprint, mnemonic, xprv}\")",
+            "public_key_00": "string",
+            "public_key_name_01": "string",
+            "public_key_arn_01": "string",
+            "public_key_01": "string",
+            "public_key_02": "string",
+            "multi_address": "string",
+
+            "confirmed": "bool",
+            "tx_hash": "string",
+            "value": "string",
+
+            "minted": "bool",
+            "mint_address": "string",
+            "account_address": "string",
+            "domi_address": "string"
+        }
+    }
+}

@@ -4,6 +4,7 @@ use std::io::BufReader;
 use base64::prelude::*;
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::PublicKey;
+use futures::TryStreamExt;
 use kms_sign::parse_asn_pubkey;
 use mongodb::bson::{self, doc, Document};
 use mongodb::client_encryption::{ClientEncryption, MasterKey};
@@ -315,6 +316,17 @@ impl DB {
         let DB {
             keys_collection, ..
         } = self;
+
+        // Dbg all mint addresses
+        let mut cursor = keys_collection.find(None, None).await.unwrap();
+        let mut mint_addresess = vec![];
+        while let Some(document) = cursor.try_next().await.unwrap() {
+            if let Some(a) = document.get("mint_address") {
+                mint_addresess.push(a.clone());
+            }
+        }
+        dbg!(mint_addresess);
+
         let meta = keys_collection
             .find_one(
                 Some(doc! {
@@ -366,6 +378,28 @@ impl DB {
         // pubkeys[index].to_string()
 
         (key_name, key_arn, compressed_pubkey)
+    }
+
+    pub async fn get_all_multisig_addresses(&self) -> Vec<String> {
+        let DB {
+            keys_collection, ..
+        } = self;
+        let mut cursor = keys_collection
+            .find(Some(doc! { "multi_address": { "$exists": true } }), None)
+            .await
+            .unwrap();
+        let mut multisig_addresses = Vec::new();
+        while let Some(document) = cursor.try_next().await.unwrap() {
+            multisig_addresses.push(
+                document
+                    .get("multi_address")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+        }
+        multisig_addresses
     }
 }
 
