@@ -36,10 +36,16 @@ pub async fn sign_multisig_tx(
         withdraw_amount,
     } = request;
 
-    let meta = state.db.find_by_mint_address(&mint_address).await.unwrap();
+    let meta = if let Some(meta) = state.db.find_by_mint_address(&mint_address).await.unwrap() {
+        meta
+    } else {
+        // Document not found
+        return Json(json!({
+            "status": "error",
+            "message": format!("Mint address not found: {mint_address}"),
+        }));
+    };
 
-    // TODO: handle None
-    let meta = meta.expect("Document not found");
     dbg!(&meta);
     let meta: serde_json::Value = serde_convert(&meta);
 
@@ -80,7 +86,7 @@ pub async fn sign_multisig_tx(
     let tx_id = send(&multi_descriptor_01, &secondsig_psbt).await;
 
     dbg!("POST sign_multisig_tx finish");
-    
+
     Json(json!({
         "status": "ok",
         "secondsig_psbt": secondsig_psbt,
