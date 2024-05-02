@@ -36,7 +36,7 @@ use kms_sign::load_dotenv;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{any, CorsLayer};
 
 use crate::balance_by_addresses::get_known_addresses;
 use crate::db::DB;
@@ -103,7 +103,7 @@ async fn main() {
         for (i, chunk) in all_multisig_addresses.chunks(10).enumerate() {
             let chunk: Vec<_> = chunk.into_iter().cloned().collect();
             tokio::spawn(async move {
-                watch_addresses(chunk, i).await;
+                // watch_addresses(i, chunk, todo!(), todo!(), todo!()).await;
             });
             sleep(Duration::from_secs(2)).await;
         }
@@ -128,7 +128,8 @@ async fn main() {
         )
         .layer(
             CorsLayer::new()
-                .allow_origin(allow_origin.parse::<HeaderValue>().unwrap())
+                .allow_origin(any())
+                // .allow_origin(allow_origin.parse::<HeaderValue>().unwrap())
                 .allow_methods([Method::GET, Method::POST])
                 .allow_headers(vec![http::header::CONTENT_TYPE]),
         )
