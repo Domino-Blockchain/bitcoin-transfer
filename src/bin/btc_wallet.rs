@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use bdk::bitcoin::Network;
 use bdk::blockchain::ElectrumBlockchain;
 use bdk::database::MemoryDatabase;
@@ -8,9 +10,7 @@ use bdk::keys::{
 };
 use bdk::template::Bip84;
 use bdk::wallet::AddressIndex::New;
-use bdk::{
-    miniscript, KeychainKind, SyncOptions, Wallet,
-};
+use bdk::{miniscript, KeychainKind, SyncOptions, Wallet};
 
 // e:0:tb1q6dsqge320xzu7g64d5arp4qx6ldvz6xd27zvgy:0
 // e:1:tb1qsvsqza56mdcmp8d02ttq06grdrcjmtcnxd08pf:779
@@ -59,7 +59,10 @@ fn main() {
 
     let client = Client::new("ssl://electrum.blockstream.info:60002").unwrap();
     let blockchain = ElectrumBlockchain::from(client);
+
+    let wallet_sync = Instant::now();
     wallet.sync(&blockchain, SyncOptions::default()).unwrap();
+    dbg!(wallet_sync.elapsed());
 
     println!(
         "mnemonic: {}\n\nrecv desc (pub key): {:#?}\n\nchng desc (pub key): {:#?}",
