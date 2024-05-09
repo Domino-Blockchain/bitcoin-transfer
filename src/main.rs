@@ -2,6 +2,7 @@
 
 mod balance_by_addresses;
 mod bdk_cli;
+mod bdk_cli_struct;
 mod db;
 mod get_address;
 mod get_mint_info;
@@ -87,8 +88,8 @@ impl AppState {
 async fn main() {
     load_dotenv();
 
-    let allow_origin = std::env::var("ALLOW_ORIGIN")
-        .unwrap_or_else(|_| "http://devnet.domichain.io:3000".to_string());
+    // let allow_origin = std::env::var("ALLOW_ORIGIN")
+    //     .unwrap_or_else(|_| "http://devnet.domichain.io:3000".to_string());
 
     // DB::test().await.unwrap();
     let db = Arc::new(DB::new().await);

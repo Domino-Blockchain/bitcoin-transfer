@@ -1,22 +1,41 @@
 {
-    "btc": {
-        "keys": {
+    "btc": { // Database
+        "keys": { // Collection. Indexes: TODO
+            // Step 1: we created multisig
+
+            // PK, Unique
+            // 2/3 BTC multisig address (TODO: 3/4)
+            "multi_address": "string",
+
+            // Generate each time
             "private_key_00": "enc(key:encryption_btc, \"{fingerprint, mnemonic, xprv}\")",
             "public_key_00": "string",
+            // KMS
             "public_key_name_01": "string",
             "public_key_arn_01": "string",
             "public_key_01": "string",
-            "public_key_02": "string",
-            "multi_address": "string",
+            // Hardcoded (TODO: replace with Ledger)
+            "public_key_02": "string", // TODO: hardcode only pubkey
 
+            // Address to mint BTCi
+            "domi_address": "string"
+        },
+        "transactions": {
+            // Wait for TX confirm, TODO check that we doesn't minted yet
+            // Step 2: got TX confirmed
+
+            // PK, Unique
+            "tx_hash": "string", // TODO
             "confirmed": "bool",
-            "tx_hash": "string",
-            "value": "string",
+            "multi_address": "string",
+            "value": "string", // sat amount
 
             "minted": "bool",
-            "mint_address": "string",
-            "account_address": "string",
-            "domi_address": "string"
+            // Unique
+            "mint_address": "string", // mint
+            "account_address": "string" // token account of user
         }
     }
 }
+
+

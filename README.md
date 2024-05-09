@@ -34,11 +34,21 @@ cargo run --bin generate_master_key
 cd bitcoin_bridge_repos/unisat-dev-support/brc20-swap-demo
 npm run start
 
+# setup config
+# DOMI Testnet URL: http://103.106.59.69:8899
+
 # btc_server
 cargo run -r --bin bitcoin_transfer
 
 # db: btc
 # collection: keys
+
+# Verify owner balance:
+spl-token \
+    --url http://108.48.39.243:8899 \
+    --program-id BTCi9FUjBVY3BSaqjzfhEPKVExuvarj8Gtfn4rJ5soLC \
+    accounts \
+    --owner 5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ
 ```
 
 AWS KMS keys managment:

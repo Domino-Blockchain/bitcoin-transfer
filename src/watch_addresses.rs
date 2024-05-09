@@ -1,4 +1,4 @@
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use aws_sdk_kms::config::IntoShared;
 use futures::{SinkExt, StreamExt, TryStreamExt};
@@ -11,11 +11,13 @@ use tokio::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+use crate::{db::DB, mint_token::mint_token_inner};
+
 const MEMPOOL_MAINNET_WS_URL: &str = "wss://mempool.space/api/v1/ws";
 const MEMPOOL_TESTNET_WS_URL: &str = "wss://mempool.space/testnet/api/v1/ws";
 
 const MEMPOOL_CHANNEL_LIMIT: usize = 10;
-const PING_INTERVAL: Duration = Duration::from_secs(60);
+const PING_INTERVAL: Duration = Duration::from_secs(30);
 
 const IGNORED_KEYS: &[&str] = &[
     "mempool-blocks",
@@ -95,7 +97,7 @@ pub async fn watch_addresses(
     unsubscribe: UnboundedReceiver<String>,
     on_update: UnboundedSender<Update>,
 ) -> (JoinHandle<()>, JoinHandle<()>) {
-    let (ws_stream, _) = connect_async(MEMPOOL_TESTNET_WS_URL)
+    let (ws_stream, _) = connect_async(MEMPOOL_MAINNET_WS_URL)
         .await
         .expect("Failed to connect");
 
@@ -111,8 +113,8 @@ pub async fn watch_addresses(
         ping_interval.tick().await;
 
         let handle_sub = |address| async {};
-        // let handle_interval = || async {
-        //     ws_write
+        // let mut handle_interval = |ws_write_mut| async move {
+        //     ws_write_mut
         //         .send(Message::text(json!({"action": "ping"}).to_string()))
         //         .await
         //         .unwrap();
@@ -121,19 +123,25 @@ pub async fn watch_addresses(
         loop {
             select! {
                 address = subscribe.recv() => handle_sub(address).await,
-                // _ = ping_interval.tick() => handle_interval().await,
-            };
-
-            match subscribe.try_recv() {
-                Ok(address) => {
+                // _ = ping_interval.tick() => handle_interval(&mut ws_write).await,
+                _ = ping_interval.tick() => {
                     ws_write
-                        .send(Message::text(json!({"track-address": address}).to_string()))
+                        .send(Message::text(json!({"action": "ping"}).to_string()))
                         .await
                         .unwrap();
-                }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => panic!("Disconnected"),
-            }
+                },
+            };
+
+            // match subscribe.try_recv() {
+            //     Ok(address) => {
+            //         ws_write
+            //             .send(Message::text(json!({"track-address": address}).to_string()))
+            //             .await
+            //             .unwrap();
+            //     }
+            //     Err(TryRecvError::Empty) => {}
+            //     Err(TryRecvError::Disconnected) => panic!("Disconnected"),
+            // }
         }
     });
 
@@ -163,4 +171,106 @@ pub async fn watch_addresses(
     // write_handle.await.unwrap();
     // read_handle.await.unwrap();
     (read_handle, write_handle)
+}
+
+pub async fn watch_address(address: String, db: Arc<DB>) {
+    let (ws_stream, _) = connect_async(MEMPOOL_MAINNET_WS_URL)
+        .await
+        .expect("Failed to connect");
+
+    let (mut ws_write, ws_read) = ws_stream.split();
+
+    let init = json!({"action": "init"}).to_string();
+    ws_write.send(Message::text(init)).await.unwrap();
+    let track_addresses = json!({"track-addresses": [&address]}).to_string();
+    ws_write.send(Message::text(track_addresses)).await.unwrap();
+
+    let write_handle = tokio::spawn(async move {
+        let mut ping_interval = interval(PING_INTERVAL);
+        ping_interval.tick().await;
+
+        loop {
+            ping_interval.tick().await;
+            ws_write
+                .send(Message::text(json!({"action": "ping"}).to_string()))
+                .await
+                .unwrap();
+        }
+    });
+
+    let read_handle = tokio::spawn(async move {
+        ws_read
+            .try_for_each(|msg| async {
+                match msg {
+                    Message::Text(msg) => {
+                        let mut msg_json: serde_json::Value = serde_json::from_str(&msg).unwrap();
+                        let msg_object = msg_json.as_object_mut().unwrap();
+                        let keys: HashSet<_> = msg_object.keys().map(|s| s.to_string()).collect();
+                        msg_object.retain(|k, _| !IGNORED_KEYS.contains(&k.as_str()));
+                        // disable auto messages
+                        println!(
+                            "got: {:?} {}",
+                            keys,
+                            serde_json::to_string_pretty(&msg_json).unwrap(),
+                        );
+                        // Get amount from TX
+                        // Get multisig address by TX info
+                        // Get domi address by multisig address
+                        let msg_object = msg_json.as_object_mut().unwrap();
+                        if msg_object.contains_key("multi-address-transactions") {
+                            let addresses = msg_object["multi-address-transactions"]
+                                .as_object()
+                                .unwrap();
+                            let address_state = &addresses[&address];
+                            let confirmed = address_state["confirmed"].as_array().unwrap();
+                            if !confirmed.is_empty() {
+                                let data = db
+                                    .find_by_deposit_address(&address)
+                                    .await
+                                    .unwrap()
+                                    .expect("multisig address doesn't found");
+                                let domi_address = data.get_str("domi_address").unwrap();
+
+                                let vout = confirmed[0]["vout"].as_array().unwrap();
+                                assert_eq!(
+                                    vout.iter()
+                                        .filter(|dest| dest["scriptpubkey_address"]
+                                            .as_str()
+                                            .unwrap()
+                                            == &address)
+                                        .count(),
+                                    1
+                                );
+                                let address_vout = vout
+                                    .iter()
+                                    .filter(|dest| {
+                                        dest["scriptpubkey_address"].as_str().unwrap() == &address
+                                    })
+                                    .next()
+                                    .unwrap();
+                                let value = address_vout["value"].as_number().unwrap();
+                                if !value.is_u64() {
+                                    todo!("value is wrong type: {value:?}");
+                                }
+                                let value = value.as_u64().unwrap();
+                                let mint_result =
+                                    mint_token_inner(&value.to_string(), domi_address).await;
+                                dbg!(mint_result).unwrap();
+
+                                if confirmed.len() > 1 {
+                                    todo!();
+                                }
+                            }
+                        }
+                    }
+                    other => panic!("expected a text message but got {other:?}"),
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+    });
+
+    write_handle.await.unwrap();
+    read_handle.await.unwrap();
 }

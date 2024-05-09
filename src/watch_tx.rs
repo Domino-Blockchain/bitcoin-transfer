@@ -13,6 +13,7 @@ use crate::{
     AppState,
 };
 
+const MEMPOOL_MAINNET_URL: &str = "https://mempool.space/api";
 const MEMPOOL_TESTNET_URL: &str = "https://mempool.space/testnet/api";
 
 #[derive(Deserialize)]
@@ -31,7 +32,7 @@ pub async fn watch_tx(
         btc_deposit_address,
         domi_address,
     } = request;
-    let url = format!("{MEMPOOL_TESTNET_URL}/tx/{tx_hash}");
+    let url = format!("{MEMPOOL_MAINNET_URL}/tx/{tx_hash}");
     let body = match get_tx_data(&url).await {
         Err(error) => {
             return Json(json!({
@@ -184,7 +185,7 @@ async fn get_value(body: serde_json::Value, deposit_address: &str) -> anyhow::Re
 // https://mempool.space/docs/api/rest#get-transaction-status
 async fn poll_is_tx_confirmed(tx_hash: &str) -> anyhow::Result<bool> {
     let body: serde_json::Value =
-        reqwest::get(format!("{MEMPOOL_TESTNET_URL}/tx/{tx_hash}/status"))
+        reqwest::get(format!("{MEMPOOL_MAINNET_URL}/tx/{tx_hash}/status"))
             .await?
             .json()
             .await?;

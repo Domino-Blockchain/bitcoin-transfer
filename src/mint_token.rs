@@ -46,6 +46,14 @@ pub async fn mint_token(Json(request): Json<MintTokenRequest>) -> Json<MintToken
     Json(mint_token_inner(&amount, &address).await.unwrap())
 }
 
+pub fn tokens_to_ui_amount(amount: u64, decimals: u32) -> f64 {
+    if amount == 0 {
+        return 0.0;
+    }
+    let divisor = 10u64.checked_pow(decimals).unwrap();
+    amount as f64 / divisor as f64
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MintTokenResult {
     pub mint_address: String,
@@ -53,6 +61,11 @@ pub struct MintTokenResult {
     pub output: serde_json::Value,
 }
 pub async fn mint_token_inner(amount: &str, address: &str) -> anyhow::Result<MintTokenResult> {
+    let amount_satomis: u64 = amount.parse().unwrap();
+    let amount_domis = tokens_to_ui_amount(amount_satomis, 8);
+    let amount_domis = amount_domis.to_string();
+    dbg!(&amount_domis);
+
     let mut out = Vec::new();
     let create_token_result = spl_token(&["create-token", "--decimals", "8"]);
     let token_address = create_token_result["commandOutput"]["address"]
@@ -64,7 +77,7 @@ pub async fn mint_token_inner(amount: &str, address: &str) -> anyhow::Result<Min
     let account_address = get_account_address(Pubkey::from_str(&token_address).unwrap());
 
     out.push(spl_token(&["create-account", &token_address]));
-    out.push(spl_token(&["mint", &token_address, amount]));
+    out.push(spl_token(&["mint", &token_address, &amount_domis]));
     // Disable mint
     out.push(spl_token(&[
         "authorize",
@@ -76,7 +89,7 @@ pub async fn mint_token_inner(amount: &str, address: &str) -> anyhow::Result<Min
     out.push(spl_token(&[
         "transfer",
         &token_address,
-        amount,
+        &amount_domis,
         address,
         "--allow-unfunded-recipient",
         "--fund-recipient",
