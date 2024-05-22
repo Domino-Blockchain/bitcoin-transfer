@@ -10,3 +10,5 @@ aws-sdk-kms = "1.17.0"
 env-file-reader = "0.3.0"
 home = "0.5.9"
 toml = "0.8.11"
+gcloud-sdk = { version = "*", features = ["google-cloud-kms-v1"] }
+base64 = "0.22.0"
