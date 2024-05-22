@@ -6,11 +6,11 @@ use bitcoin::hashes::hex::ToHex;
 use bitcoin::PublicKey;
 use futures::TryStreamExt;
 use kms_sign::parse_asn_pubkey;
-use mongodb::bson::{self, doc, Document};
+use mongodb::bson::{self, doc, Bson, Document};
 use mongodb::client_encryption::{ClientEncryption, MasterKey};
 use mongodb::error::Result;
 use mongodb::mongocrypt::ctx::{Algorithm, KmsProvider};
-use mongodb::results::UpdateResult;
+use mongodb::results::{InsertOneResult, UpdateResult};
 use mongodb::{options::ClientOptions, Client};
 use mongodb::{Collection, Namespace};
 use primitive_types::U256;
@@ -22,9 +22,8 @@ pub struct DB {
     client_decryption: Client,
     client_encryption: ClientEncryption,
     keys_collection: Collection<Document>,
+    transactions_collection: Collection<Document>,
 }
-
-const URI: &str = "mongodb://localhost:27017";
 
 impl DB {
     pub async fn print_db_structure(client: &Client) {
@@ -48,10 +47,14 @@ impl DB {
     }
 
     pub async fn new() -> Self {
+        let mongodb_uri = std::env::var("MONGODB_URI").unwrap();
+
+        let raw_key_path = std::env::var("MONGODB_MASTER_KEY_PATH").unwrap();
+        // Expand '~' -> homedir
+        let key_path: &str = &shellexpand::tilde(&raw_key_path);
+
         // Parse a connection string into an options struct.
-        let mut client_options = ClientOptions::parse("mongodb://localhost:27017")
-            .await
-            .unwrap();
+        let mut client_options = ClientOptions::parse(&mongodb_uri).await.unwrap();
 
         // Manually set an option.
         client_options.app_name = Some("BTC app".to_string());
@@ -70,21 +73,28 @@ impl DB {
         //     println!("data: {data:?}");
         // }
 
-        let (client_decryption, client_encryption) = DB::get_clients().await.unwrap();
+        let (client_decryption, client_encryption) =
+            DB::get_clients(&mongodb_uri, key_path).await.unwrap();
         let keys_collection = client_decryption
             .database("btc")
             .collection::<Document>("keys");
+        let transactions_collection = client_decryption
+            .database("btc")
+            .collection::<Document>("transactions");
 
         Self {
             client,
             client_decryption,
             client_encryption,
             keys_collection,
+            transactions_collection,
         }
     }
 
     #[allow(dead_code)]
     pub async fn test() -> Result<()> {
+        let mongodb_uri = std::env::var("MONGODB_URI").unwrap();
+
         // This must be the same master key that was used to create
         // the encryption key.
         // let mut key_bytes = vec![0u8; 96];
@@ -112,7 +122,7 @@ impl DB {
         // the automatic _decryption_ behavior. bypass_auto_encryption will
         // also disable spawning mongocryptd.
         let client = Client::encrypted_builder(
-            ClientOptions::parse(URI).await?,
+            ClientOptions::parse(&mongodb_uri).await?,
             key_vault_namespace.clone(),
             kms_providers.clone(),
         )?
@@ -162,7 +172,7 @@ impl DB {
             "Decrypted document: {:?}",
             doc.get("encryptedField").unwrap().as_str().unwrap()
         );
-        let unencrypted_coll = Client::with_uri_str(URI)
+        let unencrypted_coll = Client::with_uri_str(&mongodb_uri)
             .await?
             .database("test")
             .collection::<Document>("coll");
@@ -207,10 +217,7 @@ impl DB {
             .to_string()
     }
 
-    async fn get_clients() -> Result<(Client, ClientEncryption)> {
-        let key_path_owned = std::env::var("MONGODB_MASTER_KEY_PATH").unwrap();
-        // Expand '~' -> homedir
-        let key_path: &str = &shellexpand::tilde(&key_path_owned);
+    async fn get_clients(mongodb_uri: &str, key_path: &str) -> Result<(Client, ClientEncryption)> {
         let key_data = read_to_string(key_path)
             .await
             .map_err(|e| (e, key_path))
@@ -237,7 +244,7 @@ impl DB {
         // the automatic _decryption_ behavior. bypass_auto_encryption will
         // also disable spawning mongocryptd.
         let client = Client::encrypted_builder(
-            ClientOptions::parse(URI).await?,
+            ClientOptions::parse(mongodb_uri).await?,
             key_vault_namespace.clone(),
             kms_providers.clone(),
         )?
@@ -312,13 +319,15 @@ impl DB {
         Ok(meta)
     }
 
-    pub async fn find_by_mint_address(&self, mint_address: &str) -> Result<Option<Document>> {
+    pub async fn find_by_mint_address(&self, mint_address: &str) -> Result<(Document, Document)> {
         let DB {
-            keys_collection, ..
+            transactions_collection,
+            keys_collection,
+            ..
         } = self;
 
         // Dbg all mint addresses
-        let mut cursor = keys_collection.find(None, None).await.unwrap();
+        let mut cursor = transactions_collection.find(None, None).await.unwrap();
         let mut mint_addresess = vec![];
         while let Some(document) = cursor.try_next().await.unwrap() {
             if let Some(a) = document.get("mint_address") {
@@ -327,15 +336,25 @@ impl DB {
         }
         dbg!(mint_addresess);
 
-        let meta = keys_collection
+        let transaction = transactions_collection
             .find_one(
                 Some(doc! {
                     "mint_address": mint_address,
                 }),
                 None,
             )
-            .await?;
-        Ok(meta)
+            .await?
+            .unwrap();
+        let multi_address = transaction.get("multi_address").unwrap().as_str().unwrap();
+        let key = keys_collection
+            .find_one(
+                Some(doc! {
+                    "multi_address": multi_address,
+                }),
+                None,
+            )
+            .await?.unwrap();
+        Ok((transaction, key))
     }
 
     pub async fn update_by_deposit_address(
@@ -350,6 +369,32 @@ impl DB {
             .update_one(
                 doc! {
                     "multi_address": deposit_address,
+                },
+                doc! {
+                    "$set": update,
+                },
+                None,
+            )
+            .await
+    }
+
+    pub async fn insert_tx(&self, insert: Document) -> Result<InsertOneResult> {
+        let DB {
+            transactions_collection,
+            ..
+        } = self;
+        transactions_collection.insert_one(insert, None).await
+    }
+
+    pub async fn update_tx(&self, id: Bson, update: Document) -> Result<UpdateResult> {
+        let DB {
+            transactions_collection,
+            ..
+        } = self;
+        transactions_collection
+            .update_one(
+                doc! {
+                    "_id": id,
                 },
                 doc! {
                     "$set": update,

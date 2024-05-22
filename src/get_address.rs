@@ -5,16 +5,11 @@ use bdk::bitcoin::Network;
 use mongodb::bson::{doc, Document};
 use primitive_types::U256;
 use serde::{Deserialize, Serialize};
-use serde_json::from_value;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tokio::fs::read_to_string;
 
-use crate::{
-    bdk_cli::{bdk_cli, bdk_cli_wallet},
-    bdk_cli_struct::{BdkCli, CliGenerateKeyResult},
-    serde_convert,
-    watch_addresses::watch_address,
-    AppState,
-};
+use crate::{bdk_cli_struct::BdkCli, serde_convert, watch_addresses::watch_address, AppState};
 
 /*
 {
@@ -28,25 +23,16 @@ bdk-cli key derive --xprv $XPRV_00 --path "m/84'/1'/0'/0" | jq -r ".xpub"
 */
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GenerateKeyResult {
+struct GenerateKeyResult {
     pub fingerprint: String,
     pub mnemonic: String,
     pub xprv: String,
 }
-pub async fn generate_key() -> GenerateKeyResult {
-    let result = bdk_cli(&["key", "generate"]).await;
-    from_value(result).unwrap()
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetPubkeyResult {
+struct GetPubkeyResult {
     pub xprv: String,
     pub xpub: String,
-}
-// export XPUB_00=$(bdk-cli key derive --xprv $XPRV_00 --path "m/84'/1'/0'/0" | jq -r ".xpub")
-pub async fn get_pubkey(xprv: &str) -> GetPubkeyResult {
-    let result = bdk_cli(&["key", "derive", "--xprv", xprv, "--path", "m/84'/1'/0'/0"]).await;
-    from_value(result).unwrap()
 }
 
 pub async fn new_multisig_address(state: &AppState, domi_address: String) -> String {
@@ -71,24 +57,18 @@ pub async fn new_multisig_address(state: &AppState, domi_address: String) -> Str
     let to_save_encrypted: Document = serde_convert(&key_00);
 
     // Hardcoded hardware key
-
-    // BTC Testnet
+    let ledger_keys_string = read_to_string(std::env::var("LEDGER_KEYS_PATH").unwrap())
+        .await
+        .unwrap();
+    let ledger_keys: Value = serde_json::from_str(&ledger_keys_string).unwrap();
     let key_02 = match btc_network {
-        Network::Bitcoin => GenerateKeyResult {
-            fingerprint: "2ea57a1f".to_string(),
-            mnemonic: "inherit visual crew carry roast visa video swear faculty prepare shoulder upset trend fossil evoke time satisfy pledge grain switch stable win enforce solid".to_string(),
-            xprv: "xprv9s21ZrQH143K2hUZkrsVcZVHXRPJNFRzAUhHKk3xvtKfpaF1b1GJ2njQrgCQm7WU7TrFSXdPk9vcd3WSb3rJg4EiebZ1uUkj7szSvc4rwvn".to_string(),
-        },
-        Network::Testnet => GenerateKeyResult {
-            fingerprint: "41a64ac3".to_string(),
-            mnemonic: "elegant rack glad merge guess because fancy girl paper together inherit retire mom ribbon tissue dose rule click forum used beef cluster wrestle loyal".to_string(),
-            xprv: "tprv8ZgxMBicQKsPfQEGu2E2hYdjGwZovwNeKJzjECzmbZVTnE94n5PVnLTx6isQZn9sHpnVHo81EWRNepTHbTa6AzfuhpWRsuoNtVaDfZFoqb5".to_string(),
-        },
+        Network::Bitcoin => &ledger_keys["bitcoin"],
+        Network::Testnet => &ledger_keys["testnet"],
         Network::Signet => todo!(),
         Network::Regtest => todo!(),
         _ => todo!(),
     };
-    let xprv_02 = &key_02.xprv;
+    // let xprv_02 = key_02["xprv"].as_str().unwrap();
 
     let xpub_00 = cli.get_pubkey(xprv_00).await;
     // let xpub_00 = get_pubkey(xprv_00).await.xpub;
@@ -96,7 +76,8 @@ pub async fn new_multisig_address(state: &AppState, domi_address: String) -> Str
     let hash = get_hash(xpub_00.as_bytes());
     let (pub_name_01, pub_arn_01, xpub_01) = state.db.get_kms_pubkey(hash).await;
 
-    let xpub_02 = cli.get_pubkey(xprv_02).await;
+    // let xpub_02 = cli.get_pubkey(xprv_02).await;
+    let xpub_02 = key_02["xpub"].as_str().unwrap();
     // let xpub_02 = get_pubkey(&xprv_02).await.xpub;
 
     let multi_descriptor_00 = cli.get_multi_descriptor(xprv_00, &xpub_01, &xpub_02).await;
@@ -145,7 +126,7 @@ pub async fn get_address_from_db(
 ) -> Json<String> {
     let address = new_multisig_address(&state, request.domi_address).await;
 
-    let h = tokio::spawn(watch_address(address.clone(), state.db.clone()));
+    let _h = tokio::spawn(watch_address(address.clone(), state.db.clone()));
 
     // Json(state.db.get_address().await)
     Json(address)

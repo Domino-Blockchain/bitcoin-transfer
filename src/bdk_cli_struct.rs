@@ -1,12 +1,11 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Instant};
 
 use bdk::bitcoin::Network;
 use futures::Future;
 use serde::{Deserialize, Serialize};
 use serde_json::from_value;
-use tokio::fs::remove_dir_all;
 
-use crate::bdk_cli::{exec_with_json_output, WALLET_DIR_PERMIT};
+use crate::bdk_cli::{exec_with_json_output, try_exec_with_json_output, WALLET_DIR_PERMIT};
 
 #[derive(Debug)]
 pub struct BdkCli {
@@ -30,7 +29,7 @@ impl BdkCli {
         assert!(tokio::fs::try_exists(&cli_path_patched).await.unwrap());
 
         // Not exists
-        assert!(!tokio::fs::try_exists(&temp_wallet_dir).await.unwrap());
+        // assert!(!tokio::fs::try_exists(&temp_wallet_dir).await.unwrap());
 
         Self {
             network,
@@ -153,8 +152,39 @@ impl BdkCli {
             "--network",
             &network,
             "wallet",
-            "--wallet",
-            "wallet_name_temp", // TODO: config
+            // "--wallet",
+            // "wallet_name_temp", // TODO: config
+            "--descriptor",
+            descriptor,
+        ];
+        cli_args.extend_from_slice(args);
+        cli_args.into_iter().map(|s| s.to_owned()).collect()
+    }
+
+    fn wallet_args_sync(&self, descriptor: &str, args: &[&str]) -> Vec<String> {
+        // https://github.com/Blockstream/esplora/blob/master/API.md
+        let server = match self.network {
+            Network::Bitcoin => "https://blockstream.info/api",
+            Network::Testnet => "https://blockstream.info/testnet/api",
+            Network::Signet => todo!(),
+            Network::Regtest => todo!(),
+            _ => todo!(),
+        };
+        let network = self.network.to_string();
+        let mut cli_args = vec![
+            "--network",
+            &network,
+            "wallet",
+            "--server",
+            server,
+            "--stop_gap",
+            "1",
+            // "--conc",
+            // "8",
+            "--timeout",
+            "15",
+            // "--wallet",
+            // "wallet_name_temp", // TODO: config
             "--descriptor",
             descriptor,
         ];
@@ -171,62 +201,140 @@ impl BdkCli {
         amount: &str,
     ) -> String {
         let multi_descriptor_00 = self.get_multi_descriptor(xprv_00, xpub_01, xpub_02).await;
-        self.with_temp_wallet_dir(|| async {
-            // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sync
-            let sync_output = exec_with_json_output(
-                self.wallet_args(&multi_descriptor_00, &["sync"]).iter(),
-                &self.cli_path,
-            )
-            .await;
-            dbg!(sync_output);
 
-            // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 get_balance | jq
-            let get_balance_result = exec_with_json_output(
-                self.wallet_args(&multi_descriptor_00, &["get_balance"])
-                    .iter(),
-                &self.cli_path,
-            )
-            .await;
-            dbg!(get_balance_result);
-
-            // export CHANGE_ID=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 policies | jq -r ".external.id")
-            let change_id_ = exec_with_json_output(
-                self.wallet_args(&multi_descriptor_00, &["policies"]).iter(),
-                &self.cli_path,
-            )
-            .await;
-            let change_id = change_id_["external"]["id"].as_str().unwrap();
-
-            // export UNSIGNED_PSBT=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 create_tx --to $TO_ADDRESS:$AMOUNT --external_policy "{\"$CHANGE_ID\": [0,1]}" | jq -r '.psbt')
-            let unsigned_psbt_ = exec_with_json_output(
-                self.wallet_args(
-                    &multi_descriptor_00,
-                    &[
-                        "create_tx",
-                        "--to",
-                        &format!("{to_address}:{amount}"),
-                        "--external_policy",
-                        &format!("{{\"{change_id}\": [0,1]}}"),
-                    ],
+        let onesig_result = self
+            .with_temp_wallet_dir(|| async {
+                // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sync
+                let start_sync = Instant::now();
+                let sync_output = exec_with_json_output(
+                    self.wallet_args_sync(&multi_descriptor_00, &["sync"])
+                        .iter(),
+                    &self.cli_path,
                 )
-                .iter(),
-                &self.cli_path,
-            )
-            .await;
-            let unsigned_psbt = unsigned_psbt_["psbt"].as_str().unwrap();
+                .await;
+                dbg!(sync_output);
+                dbg!(start_sync.elapsed());
 
-            // export ONESIG_PSBT=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sign --psbt $UNSIGNED_PSBT | jq -r '.psbt')
-            let onesig_psbt_ = exec_with_json_output(
-                self.wallet_args(&multi_descriptor_00, &["sign", "--psbt", unsigned_psbt])
+                // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 get_balance | jq
+                let get_balance_result = exec_with_json_output(
+                    self.wallet_args(&multi_descriptor_00, &["get_balance"])
+                        .iter(),
+                    &self.cli_path,
+                )
+                .await;
+                dbg!(&get_balance_result);
+
+                let confirmed = get_balance_result["satoshi"]["confirmed"]
+                    .as_number()
+                    .unwrap()
+                    .as_u64()
+                    .unwrap();
+                if confirmed == 0 {
+                    return Err("Confirmed balance is zero");
+                }
+                let amount: u64 = amount.parse().unwrap();
+                if amount > confirmed {
+                    return Err("Confirmed balance less than withdraw amount");
+                }
+
+                // export CHANGE_ID=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 policies | jq -r ".external.id")
+                let change_id_ = exec_with_json_output(
+                    self.wallet_args(&multi_descriptor_00, &["policies"]).iter(),
+                    &self.cli_path,
+                )
+                .await;
+                let change_id = change_id_["external"]["id"].as_str().unwrap();
+
+                let test_fees_full_amount = try_exec_with_json_output(
+                    self.wallet_args(
+                        &multi_descriptor_00,
+                        &[
+                            "create_tx",
+                            "--to",
+                            &format!("{to_address}:{amount}"),
+                            "--external_policy",
+                            &format!("{{\"{change_id}\": [0,1]}}"),
+                        ],
+                    )
                     .iter(),
-                &self.cli_path,
-            )
-            .await;
-            let onesig_psbt = onesig_psbt_["psbt"].as_str().unwrap().to_string();
+                    &self.cli_path,
+                )
+                .await;
+                let fee = match test_fees_full_amount {
+                    Ok(output_json) => {
+                        let details = &output_json["details"];
+                        let fee = details["fee"].as_number().unwrap().as_u64().unwrap();
+                        let sent = details["sent"].as_number().unwrap().as_u64().unwrap();
+                        let received = details["received"].as_number().unwrap().as_u64().unwrap();
+                        let output = sent.checked_sub(received).unwrap();
+                        assert_eq!(output, amount + fee);
+                        fee
+                    }
+                    Err(output) => {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        // Insufficient funds: 5000 sat available of 5147 sat needed
+                        let pattern = " sat available of ";
+                        let (before, after) = stderr.split_once(pattern).unwrap();
+                        let (_rest, sat_available) = before.rsplit_once(' ').unwrap();
+                        let (sat_needed, _rest) = after.split_once(' ').unwrap();
+                        let sat_available: u64 = sat_available.parse().unwrap();
+                        assert_eq!(sat_available, confirmed);
 
-            onesig_psbt
-        })
-        .await
+                        let sat_needed: u64 = sat_needed.parse().unwrap();
+
+                        let fee = sat_needed - amount;
+                        fee
+                    }
+                };
+
+                // total_amount = send_amount + fee
+                let send_amount = amount - fee;
+
+                let send_amount = 3000;
+                dbg!(send_amount);
+
+                // export UNSIGNED_PSBT=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 create_tx --to $TO_ADDRESS:$AMOUNT --external_policy "{\"$CHANGE_ID\": [0,1]}" | jq -r '.psbt')
+                let create_tx_result = exec_with_json_output(
+                    self.wallet_args(
+                        &multi_descriptor_00,
+                        &[
+                            "create_tx",
+                            "--to",
+                            &format!("{to_address}:{send_amount}"),
+                            "--external_policy",
+                            &format!("{{\"{change_id}\": [0,1]}}"),
+                        ],
+                    )
+                    .iter(),
+                    &self.cli_path,
+                )
+                .await;
+
+                // let details = &create_tx_result["details"];
+                // let fee = details["fee"].as_number().unwrap().as_u64().unwrap();
+                // let sent = details["sent"].as_number().unwrap().as_u64().unwrap();
+                // let received = details["received"].as_number().unwrap().as_u64().unwrap();
+                // let output = sent.checked_sub(received).unwrap();
+                // assert_eq!(output, send_amount + fee);
+                // assert_eq!(output, amount);
+
+                let unsigned_psbt = create_tx_result["psbt"].as_str().unwrap();
+
+                // export ONESIG_PSBT=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sign --psbt $UNSIGNED_PSBT | jq -r '.psbt')
+                let onesig_psbt_ = exec_with_json_output(
+                    self.wallet_args(&multi_descriptor_00, &["sign", "--psbt", unsigned_psbt])
+                        .iter(),
+                    &self.cli_path,
+                )
+                .await;
+                dbg!(&onesig_psbt_);
+                let onesig_psbt = onesig_psbt_["psbt"].as_str().unwrap().to_string();
+
+                Ok(onesig_psbt)
+            })
+            .await;
+
+        onesig_result.unwrap()
     }
 
     pub async fn secondsig(
@@ -247,27 +355,37 @@ impl BdkCli {
 
         // export SECONDSIG_PSBT=$(./bdk-cli/target/release/bdk-cli wallet --aws_kms $KEY_ARN --wallet wallet_name_msd01 --descriptor $MULTI_DESCRIPTOR_01 sign --psbt $ONESIG_PSBT | jq -r '.psbt')
 
-        self.with_temp_wallet_dir(|| async {
-            let secondsig_psbt_ = exec_with_json_output(
-                self.wallet_args(
-                    &multi_descriptor_01,
-                    &["--aws_kms", key_arn, "sign", "--psbt", onesig_psbt],
+        let result = self
+            .with_temp_wallet_dir(|| async {
+                let secondsig_psbt_ = exec_with_json_output(
+                    self.wallet_args(
+                        &multi_descriptor_01,
+                        &["--aws_kms", key_arn, "sign", "--psbt", onesig_psbt],
+                    )
+                    .iter(),
+                    &self.cli_path_patched,
                 )
-                .iter(),
-                &self.cli_path_patched,
-            )
+                .await;
+                dbg!(&secondsig_psbt_);
+                let secondsig_psbt = secondsig_psbt_["psbt"].as_str().unwrap();
+
+                // if [ "$ONESIG_PSBT" = "$SECONDSIG_PSBT" ]; then
+                //     echo "ERROR: Secondsig don't change PSBT"
+                //     exit 1
+                // fi
+                // assert_ne!(onesig_psbt, secondsig_psbt);
+                if onesig_psbt == secondsig_psbt {
+                    return Err("ERROR: Secondsig don't change PSBT");
+                }
+
+                if !secondsig_psbt_["is_finalized"].as_bool().unwrap() {
+                    return Err("ERROR: Still not finalized after secondsig");
+                }
+
+                Ok((secondsig_psbt.to_string(), multi_descriptor_01))
+            })
             .await;
-            let secondsig_psbt = secondsig_psbt_["psbt"].as_str().unwrap();
-
-            // if [ "$ONESIG_PSBT" = "$SECONDSIG_PSBT" ]; then
-            //     echo "ERROR: Secondsig don't change PSBT"
-            //     exit 1
-            // fi
-            assert_ne!(onesig_psbt, secondsig_psbt);
-
-            (secondsig_psbt.to_string(), multi_descriptor_01)
-        })
-        .await
+        result.unwrap()
     }
 
     pub async fn send(&self, multi_descriptor_01: &str, secondsig_psbt: &str) -> String {
@@ -293,7 +411,8 @@ impl BdkCli {
     }
 
     async fn remove_temp_wallet_dir(&self) {
-        let _ = remove_dir_all(&self.temp_wallet_dir).await;
+        // FIXME: enable deletion?
+        // let _ = remove_dir_all(&self.temp_wallet_dir).await;
     }
 
     pub async fn with_temp_wallet_dir<T, F: Future<Output = T>>(&self, f: impl FnOnce() -> F) -> T {

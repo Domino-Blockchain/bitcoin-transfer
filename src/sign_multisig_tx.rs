@@ -1,15 +1,19 @@
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 use axum::{extract::State, Json};
+use bdk::bitcoin::Network;
 use domichain_program::pubkey::Pubkey;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::fs::remove_dir_all;
+use tracing::info;
 
 use crate::{
     bdk_cli::{
         bdk_cli, bdk_cli_wallet, bdk_cli_wallet_patched, bdk_cli_wallet_temp, WALLET_DIR_PERMIT,
     },
+    bdk_cli_struct::BdkCli,
+    mempool::get_mempool_url,
     mint_token::get_account_address,
     serde_convert,
     spl_token::spl_token,
@@ -20,7 +24,7 @@ use crate::{
 #[derive(Deserialize)]
 pub struct SignMultisigTxRequest {
     mint_address: String,
-    withdraw_address: String,
+    withdraw_address: String, // BTC
     withdraw_amount: String,
 }
 
@@ -30,24 +34,41 @@ pub async fn sign_multisig_tx(
 ) -> Json<serde_json::Value> {
     dbg!("POST sign_multisig_tx");
 
+    let btc_network = Network::from_str(&std::env::var("BTC_NETWORK").unwrap()).unwrap();
+    let cli_path = PathBuf::from(std::env::var("BDK_CLI_PATH_DEFAULT").unwrap());
+    let cli_path_patched = PathBuf::from(std::env::var("BDK_CLI_PATH_PATCHED").unwrap());
+    let temp_wallet_dir = PathBuf::from(std::env::var("BDK_TEMP_WALLET_DIR").unwrap());
+    let descriptor = None;
+    let cli = BdkCli::new(
+        btc_network,
+        cli_path,
+        cli_path_patched,
+        temp_wallet_dir,
+        descriptor,
+    )
+    .await;
+
     let SignMultisigTxRequest {
         mint_address,
         withdraw_address,
         withdraw_amount,
     } = request;
 
-    let meta = if let Some(meta) = state.db.find_by_mint_address(&mint_address).await.unwrap() {
-        meta
-    } else {
-        // Document not found
-        return Json(json!({
-            "status": "error",
-            "message": format!("Mint address not found: {mint_address}"),
-        }));
-    };
+    let (transaction, key) = state.db.find_by_mint_address(&mint_address).await.unwrap();
+    // let meta = if let Some(meta) =  {
+    //     meta
+    // } else {
+    //     // Document not found
+    //     return Json(json!({
+    //         "status": "error",
+    //         "message": format!("Mint address not found: {mint_address}"),
+    //     }));
+    // };
 
-    dbg!(&meta);
-    let meta: serde_json::Value = serde_convert(&meta);
+    dbg!(&transaction);
+    dbg!(&key);
+    let _transaction: serde_json::Value = serde_convert(&transaction);
+    let key: serde_json::Value = serde_convert(&key);
 
     // TODO: get fields from meta
 
@@ -56,15 +77,15 @@ pub async fn sign_multisig_tx(
     // export XPUB_02=$(bdk-cli key derive --xprv $XPRV_02 --path "m/84'/1'/0'/0" | jq -r ".xpub")
 
     let private_key_00: serde_json::Value =
-        serde_json::from_str(meta["private_key_00"].as_str().unwrap()).unwrap();
+        serde_json::from_str(key["private_key_00"].as_str().unwrap()).unwrap();
     let xprv_00 = &private_key_00["xprv"].as_str().unwrap();
     let descriptor_00 = format!("{xprv_00}/84h/1h/0h/0/*");
 
-    let xpub_00 = meta["public_key_00"].as_str().unwrap();
-    let xpub_01 = meta["public_key_01"].as_str().unwrap();
-    let xpub_02 = meta["public_key_02"].as_str().unwrap();
+    let xpub_00 = key["public_key_00"].as_str().unwrap();
+    let xpub_01 = key["public_key_01"].as_str().unwrap();
+    let xpub_02 = key["public_key_02"].as_str().unwrap();
 
-    let key_arn = meta["public_key_arn_01"].as_str().unwrap();
+    let key_arn = key["public_key_arn_01"].as_str().unwrap();
 
     // TODO: check constrains, check burn
 
@@ -73,25 +94,34 @@ pub async fn sign_multisig_tx(
     // let to_address = "tb1qjk7wqccmetsngh9e0zff73rhsqny568g5fs758";
     // let amount = "400";
 
-    let onesig_psbt = onesig(&descriptor_00, xpub_01, xpub_02, to_address, amount).await;
+    let onesig_psbt = cli
+        .onesig(xprv_00, xpub_01, xpub_02, to_address, amount)
+        .await;
+    // let onesig_psbt = onesig(&descriptor_00, xpub_01, xpub_02, to_address, amount).await;
     dbg!(&onesig_psbt);
 
-    let (secondsig_psbt, multi_descriptor_01) =
-        secondsig(xpub_00, xpub_01, xpub_02, &onesig_psbt, key_arn).await;
+    let (secondsig_psbt, multi_descriptor_01) = cli
+        .secondsig(xpub_00, xpub_01, xpub_02, &onesig_psbt, key_arn)
+        .await;
+    // let (secondsig_psbt, multi_descriptor_01) =
+    //     secondsig(xpub_00, xpub_01, xpub_02, &onesig_psbt, key_arn).await;
 
-    let account_address = get_account_address(Pubkey::from_str(&mint_address).unwrap());
-    let burn_output = spl_token(&["burn", &account_address.to_string(), &withdraw_amount]);
-    dbg!(&burn_output);
+    // let account_address = get_account_address(Pubkey::from_str(&mint_address).unwrap());
+    // info!("Burn system account_address: {account_address:?}");
+    // let burn_output = spl_token(&["burn", &account_address.to_string(), &withdraw_amount]);
+    // dbg!(&burn_output);
 
-    let tx_id = send(&multi_descriptor_01, &secondsig_psbt).await;
+    let tx_id = cli.send(&multi_descriptor_01, &secondsig_psbt).await;
+    // let tx_id = send(&multi_descriptor_01, &secondsig_psbt).await;
 
-    dbg!("POST sign_multisig_tx finish");
+    info!("POST sign_multisig_tx finish");
 
+    let mempool_url = get_mempool_url();
     Json(json!({
         "status": "ok",
         "secondsig_psbt": secondsig_psbt,
         "tx_id": tx_id,
-        "tx_link": format!("https://mempool.space/testnet/tx/{tx_id}"),
+        "tx_link": format!("{mempool_url}/tx/{tx_id}"),
     }))
 }
 

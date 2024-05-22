@@ -9,7 +9,10 @@ use crate::spl_token;
 pub fn get_account_address(token_address: Pubkey) -> Pubkey {
     // DWallet: 5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ
 
-    let token_program_id = Pubkey::from_str("TokenAAGbeQq5tGW2r5RoR3oauzN2EkNFiHNPw9q34s").unwrap();
+    // let token_program_id = Pubkey::from_str("TokenAAGbeQq5tGW2r5RoR3oauzN2EkNFiHNPw9q34s").unwrap();
+    let token_program_id_string = std::env::var("SPL_TOKEN_PROGRAM_ID").unwrap();
+    let token_program_id = Pubkey::from_str(&token_program_id_string).unwrap();
+
     let associated_token_program_id =
         Pubkey::from_str("Dt8fRCpjeV6JDemhPmtcTKijgKdPxXHn9Wo9cXY5agtG").unwrap();
     // owner == Fk2HRYuDw9h29yKs1tNDjvjdvYMqQ2dGg9sS4JhUzQ6w

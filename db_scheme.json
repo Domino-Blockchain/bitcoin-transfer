@@ -10,12 +10,19 @@
             // Generate each time
             "private_key_00": "enc(key:encryption_btc, \"{fingerprint, mnemonic, xprv}\")",
             "public_key_00": "string",
-            // KMS
+
+            // AWS KMS
             "public_key_name_01": "string",
             "public_key_arn_01": "string",
             "public_key_01": "string",
+
             // Hardcoded (TODO: replace with Ledger)
-            "public_key_02": "string", // TODO: hardcode only pubkey
+            "public_key_02": "string",
+
+            // TODO: Google KMS
+            "public_key_name_03": "string", // TODO
+            "public_key_arn_03": "string", // TODO
+            "public_key_03": "string", // TODO
 
             // Address to mint BTCi
             "domi_address": "string"
@@ -33,7 +40,8 @@
             "minted": "bool",
             // Unique
             "mint_address": "string", // mint
-            "account_address": "string" // token account of user
+            "account_address": "string", // token account of user
+            "domi_address": "string"
         }
     }
 }

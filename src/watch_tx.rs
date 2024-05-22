@@ -8,13 +8,8 @@ use serde_json::json;
 use tokio::time::sleep;
 
 use crate::{
-    db::DB,
-    mint_token::{mint_token_inner, MintTokenResult},
-    AppState,
+    db::DB, mempool::get_mempool_url, mint_token::{mint_token_inner, MintTokenResult}, AppState
 };
-
-const MEMPOOL_MAINNET_URL: &str = "https://mempool.space/api";
-const MEMPOOL_TESTNET_URL: &str = "https://mempool.space/testnet/api";
 
 #[derive(Deserialize)]
 pub struct WatchTxRequest {
@@ -32,7 +27,8 @@ pub async fn watch_tx(
         btc_deposit_address,
         domi_address,
     } = request;
-    let url = format!("{MEMPOOL_MAINNET_URL}/tx/{tx_hash}");
+    let mempool_url = get_mempool_url();
+    let url = format!("{mempool_url}/api/tx/{tx_hash}");
     let body = match get_tx_data(&url).await {
         Err(error) => {
             return Json(json!({
@@ -184,11 +180,11 @@ async fn get_value(body: serde_json::Value, deposit_address: &str) -> anyhow::Re
 
 // https://mempool.space/docs/api/rest#get-transaction-status
 async fn poll_is_tx_confirmed(tx_hash: &str) -> anyhow::Result<bool> {
-    let body: serde_json::Value =
-        reqwest::get(format!("{MEMPOOL_MAINNET_URL}/tx/{tx_hash}/status"))
-            .await?
-            .json()
-            .await?;
+    let mempool_url = get_mempool_url();
+    let body: serde_json::Value = reqwest::get(format!("{mempool_url}/api/tx/{tx_hash}/status"))
+        .await?
+        .json()
+        .await?;
     let confirmed = body["confirmed"].as_bool().ok_or(anyhow!("Not bool"))?;
     Ok(confirmed)
 }

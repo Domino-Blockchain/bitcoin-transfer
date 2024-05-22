@@ -2,6 +2,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use aws_sdk_kms::config::IntoShared;
 use futures::{SinkExt, StreamExt, TryStreamExt};
+use mongodb::bson::doc;
 use serde_json::json;
 use tokio::{
     pin, select,
@@ -10,6 +11,7 @@ use tokio::{
     time::{interval, sleep},
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tracing::info;
 
 use crate::{db::DB, mint_token::mint_token_inner};
 
@@ -208,7 +210,7 @@ pub async fn watch_address(address: String, db: Arc<DB>) {
                         let keys: HashSet<_> = msg_object.keys().map(|s| s.to_string()).collect();
                         msg_object.retain(|k, _| !IGNORED_KEYS.contains(&k.as_str()));
                         // disable auto messages
-                        println!(
+                        info!(
                             "got: {:?} {}",
                             keys,
                             serde_json::to_string_pretty(&msg_json).unwrap(),
@@ -253,9 +255,46 @@ pub async fn watch_address(address: String, db: Arc<DB>) {
                                     todo!("value is wrong type: {value:?}");
                                 }
                                 let value = value.as_u64().unwrap();
+
+                                // TODO: save in DB
+                                let tx_hash = confirmed[0]["txid"].as_str().unwrap();
+                                // FIXME: insert instead
+                                let insert_result = db
+                                    .insert_tx(doc! {
+                                        "tx_hash": tx_hash,
+                                        "confirmed": true,
+                                        "multi_address": &address,
+                                        "value": value.to_string(),
+                                    })
+                                    .await
+                                    .unwrap();
+                                info!("Inserted TX. DB ID: {}", insert_result.inserted_id);
+
+                                // TODO: mint token
+                                // Fail if:
+                                // - network issue
+                                // - insufficient balance
+                                // - address already exists
                                 let mint_result =
                                     mint_token_inner(&value.to_string(), domi_address).await;
-                                dbg!(mint_result).unwrap();
+                                let mint_result = dbg!(mint_result).unwrap();
+
+                                // TODO: save mint result
+                                let res = db
+                                    .update_tx(
+                                        insert_result.inserted_id,
+                                        doc! {
+                                            "minted": true,
+                                            "mint_address": mint_result.mint_address,
+                                            "account_address": mint_result.account_address,
+                                            "domi_address": domi_address
+                                        },
+                                    )
+                                    .await
+                                    .unwrap();
+                                assert_eq!(res.matched_count, 1);
+                                assert_eq!(res.modified_count, 1);
+                                assert_eq!(res.upserted_id, None);
 
                                 if confirmed.len() > 1 {
                                     todo!();
