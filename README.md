@@ -20,6 +20,11 @@ TODO:
 
 - Install libmongocrypt https://www.mongodb.com/docs/manual/core/csfle/reference/libmongocrypt/
 ```sh
+# Install the BDK CLI
+cargo install bdk-cli --features compiler,electrum
+# OR
+cargo install bdk-cli --features compiler,esplora-ureq
+
 # Create AWS KMS keys
 # Edit `aws_kms_policy.json` file with admin user instead `user@company.com`
 python create_aws_keys.py
