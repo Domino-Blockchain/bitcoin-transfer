@@ -4,6 +4,7 @@ use bdk::bitcoin::Network;
 use futures::Future;
 use serde::{Deserialize, Serialize};
 use serde_json::from_value;
+use tracing::info;
 
 use crate::bdk_cli::{exec_with_json_output, try_exec_with_json_output, WALLET_DIR_PERMIT};
 
@@ -161,7 +162,7 @@ impl BdkCli {
         cli_args.into_iter().map(|s| s.to_owned()).collect()
     }
 
-    fn wallet_args_sync(&self, descriptor: &str, args: &[&str]) -> Vec<String> {
+    fn wallet_args_online(&self, descriptor: &str, args: &[&str]) -> Vec<String> {
         // https://github.com/Blockstream/esplora/blob/master/API.md
         let server = match self.network {
             Network::Bitcoin => "https://blockstream.info/api",
@@ -207,13 +208,13 @@ impl BdkCli {
                 // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sync
                 let start_sync = Instant::now();
                 let sync_output = exec_with_json_output(
-                    self.wallet_args_sync(&multi_descriptor_00, &["sync"])
+                    self.wallet_args_online(&multi_descriptor_00, &["sync"])
                         .iter(),
                     &self.cli_path,
                 )
                 .await;
-                dbg!(sync_output);
-                dbg!(start_sync.elapsed());
+                info!("sync_output: {:?}", sync_output);
+                info!("Sync took: {:?}", start_sync.elapsed());
 
                 // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 get_balance | jq
                 let get_balance_result = exec_with_json_output(
@@ -222,7 +223,7 @@ impl BdkCli {
                     &self.cli_path,
                 )
                 .await;
-                dbg!(&get_balance_result);
+                info!("get_balance_result: {get_balance_result:?}");
 
                 let confirmed = get_balance_result["satoshi"]["confirmed"]
                     .as_number()
@@ -245,6 +246,7 @@ impl BdkCli {
                 .await;
                 let change_id = change_id_["external"]["id"].as_str().unwrap();
 
+                // Deduct the fees from the provided amount
                 let test_fees_full_amount = try_exec_with_json_output(
                     self.wallet_args(
                         &multi_descriptor_00,
@@ -290,8 +292,10 @@ impl BdkCli {
                 // total_amount = send_amount + fee
                 let send_amount = amount - fee;
 
-                let send_amount = 3000;
-                dbg!(send_amount);
+                // Testing: Hardcoded
+                // let send_amount = 3000;
+
+                info!("send_amount: {send_amount}");
 
                 // export UNSIGNED_PSBT=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 create_tx --to $TO_ADDRESS:$AMOUNT --external_policy "{\"$CHANGE_ID\": [0,1]}" | jq -r '.psbt')
                 let create_tx_result = exec_with_json_output(
@@ -327,7 +331,7 @@ impl BdkCli {
                     &self.cli_path,
                 )
                 .await;
-                dbg!(&onesig_psbt_);
+                info!("onesig_psbt: {onesig_psbt_:?}");
                 let onesig_psbt = onesig_psbt_["psbt"].as_str().unwrap().to_string();
 
                 Ok(onesig_psbt)
@@ -366,7 +370,7 @@ impl BdkCli {
                     &self.cli_path_patched,
                 )
                 .await;
-                dbg!(&secondsig_psbt_);
+                info!("secondsig_psbt: {secondsig_psbt_:?}");
                 let secondsig_psbt = secondsig_psbt_["psbt"].as_str().unwrap();
 
                 // if [ "$ONESIG_PSBT" = "$SECONDSIG_PSBT" ]; then
@@ -394,7 +398,7 @@ impl BdkCli {
         // echo $TX_ID
         self.with_temp_wallet_dir(|| async {
             let tx_id_ = exec_with_json_output(
-                self.wallet_args(
+                self.wallet_args_online(
                     multi_descriptor_01,
                     &["broadcast", "--psbt", secondsig_psbt],
                 )
@@ -402,6 +406,7 @@ impl BdkCli {
                 &self.cli_path,
             )
             .await;
+            info!("broadcast output: {tx_id_:?}");
             let tx_id = tx_id_["txid"].as_str().unwrap().to_string();
 
             // echo "Check: https://mempool.space/testnet/tx/$(echo $TX_ID | jq -r ".txid")"

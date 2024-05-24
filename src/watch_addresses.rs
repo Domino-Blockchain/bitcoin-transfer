@@ -1,22 +1,18 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use aws_sdk_kms::config::IntoShared;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use mongodb::bson::doc;
 use serde_json::json;
 use tokio::{
-    pin, select,
-    sync::mpsc::{error::TryRecvError, UnboundedReceiver, UnboundedSender},
+    select,
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
-    time::{interval, sleep},
+    time::interval,
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::info;
 
-use crate::{db::DB, mint_token::mint_token_inner};
-
-const MEMPOOL_MAINNET_WS_URL: &str = "wss://mempool.space/api/v1/ws";
-const MEMPOOL_TESTNET_WS_URL: &str = "wss://mempool.space/testnet/api/v1/ws";
+use crate::{db::DB, mempool::get_mempool_ws_url, mint_token::mint_token_inner};
 
 const MEMPOOL_CHANNEL_LIMIT: usize = 10;
 const PING_INTERVAL: Duration = Duration::from_secs(30);
@@ -99,7 +95,7 @@ pub async fn watch_addresses(
     unsubscribe: UnboundedReceiver<String>,
     on_update: UnboundedSender<Update>,
 ) -> (JoinHandle<()>, JoinHandle<()>) {
-    let (ws_stream, _) = connect_async(MEMPOOL_MAINNET_WS_URL)
+    let (ws_stream, _) = connect_async(get_mempool_ws_url())
         .await
         .expect("Failed to connect");
 
@@ -176,7 +172,7 @@ pub async fn watch_addresses(
 }
 
 pub async fn watch_address(address: String, db: Arc<DB>) {
-    let (ws_stream, _) = connect_async(MEMPOOL_MAINNET_WS_URL)
+    let (ws_stream, _) = connect_async(get_mempool_ws_url())
         .await
         .expect("Failed to connect");
 

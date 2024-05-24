@@ -2,7 +2,6 @@ use std::{path::PathBuf, str::FromStr};
 
 use axum::{extract::State, Json};
 use bdk::bitcoin::Network;
-use domichain_program::pubkey::Pubkey;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::fs::remove_dir_all;
@@ -14,9 +13,7 @@ use crate::{
     },
     bdk_cli_struct::BdkCli,
     mempool::get_mempool_url,
-    mint_token::get_account_address,
     serde_convert,
-    spl_token::spl_token,
     AppState,
 };
 

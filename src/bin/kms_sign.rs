@@ -47,3 +47,42 @@ async fn main() -> Result<(), kms::Error> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_get_pubkey_aws() {
+        init();
+        let pk = get_pubkey_aws().await.unwrap();
+        println!("{}", hex::encode(&pk));
+    }
+
+    #[tokio::test]
+    async fn test_sign_aws() {
+        init();
+        let data: Vec<u8> = vec![0; 32];
+        let hex_str = hex::encode(data);
+        let signature = sign_aws(hex::decode(hex_str).unwrap()).await.unwrap();
+        println!("{}", hex::encode(&signature));
+    }
+
+    #[tokio::test]
+    async fn test_get_pubkey_google() {
+        init();
+        std::env::set_var("KEY_NAME", "projects/domichain-archive/locations/global/keyRings/TestKeyring/cryptoKeys/TestKey1/cryptoKeyVersions/1");
+        let pk = get_pubkey_google().await.unwrap();
+        println!("{}", hex::encode(&pk));
+    }
+
+    #[tokio::test]
+    async fn test_sign_google() {
+        init();
+        std::env::set_var("KEY_NAME", "projects/domichain-archive/locations/global/keyRings/TestKeyring/cryptoKeys/TestKey1/cryptoKeyVersions/1");
+        let data: Vec<u8> = vec![0; 32];
+        let hex_str = hex::encode(data);
+        let signature = sign_google(hex::decode(hex_str).unwrap()).await.unwrap();
+        println!("{}", hex::encode(&signature));
+    }
+}
