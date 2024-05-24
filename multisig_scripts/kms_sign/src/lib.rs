@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs::read_to_string;
 
 use aws_sdk_kms as kms;
@@ -35,6 +36,12 @@ fn load_aws_config(file_name: &str, key_prefix: Option<&str>) -> Option<()> {
     Some(())
 }
 
+fn get_env<K: AsRef<OsStr> + std::fmt::Debug>(key: K) -> String {
+    std::env::var(&key)
+        .map_err(|err| (err, key))
+        .expect("Env var is not present")
+}
+
 pub async fn sign(digest: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     if std::env::var("KEY_ARN").is_ok() {
         sign_aws(digest).await.map_err(|e| e.into())
@@ -63,7 +70,7 @@ fn debug_sign_big_numbers(signature: &[u8]) {
 }
 
 pub async fn sign_aws(digest: Vec<u8>) -> Result<Vec<u8>, kms::Error> {
-    let key_arn = std::env::var("KEY_ARN").unwrap();
+    let key_arn = get_env("KEY_ARN");
 
     let config = aws_config::load_from_env().await;
     let client = aws_sdk_kms::Client::new(&config);
@@ -91,8 +98,8 @@ pub fn parse_asn_pubkey<'a>(pk: &'a [u8]) -> asn1::ParseResult<&'a [u8]> {
         return d.read_element::<asn1::Sequence>()?.parse(|d| {
             d.read_element::<asn1::Sequence>()?
                 .parse(|d| {
-                    d.read_element::<asn1::ObjectIdentifier>().unwrap();
-                    d.read_element::<asn1::ObjectIdentifier>().unwrap();
+                    let _obj_id = d.read_element::<asn1::ObjectIdentifier>().unwrap();
+                    let _obj_id = d.read_element::<asn1::ObjectIdentifier>().unwrap();
                     asn1::ParseResult::Ok(())
                 })
                 .unwrap();
@@ -113,7 +120,7 @@ pub async fn get_pubkey() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 }
 
 pub async fn get_pubkey_aws() -> Result<Vec<u8>, kms::Error> {
-    let key_arn = std::env::var("KEY_ARN").unwrap();
+    let key_arn = get_env("KEY_ARN");
 
     let config = aws_config::load_from_env().await;
     let client = aws_sdk_kms::Client::new(&config);
@@ -145,7 +152,7 @@ pub async fn google_kms_client(
 
 // Source: https://github.com/abdolence/gcloud-sdk-rs/blob/master/examples/secrets-manager-client/src/main.rs
 pub async fn sign_google(digest: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let key_name = std::env::var("KEY_NAME")?;
+    let key_name = get_env("KEY_NAME");
     let kms_client = google_kms_client().await?;
 
     let response = kms_client
@@ -168,7 +175,7 @@ pub async fn sign_google(digest: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error:
 }
 
 pub async fn get_pubkey_google() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let key_name = std::env::var("KEY_NAME")?;
+    let key_name = get_env("KEY_NAME");
 
     let kms_client = google_kms_client().await?;
 

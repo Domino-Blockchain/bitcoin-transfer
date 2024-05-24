@@ -13,8 +13,10 @@ export CHANGE_ID=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI
 export TO_ADDRESS="tb1qjk7wqccmetsngh9e0zff73rhsqny568g5fs758" # UniSat test wallet
 export AMOUNT="550" # More than dust limit
 echo "Sending $AMOUNT sat to $TO_ADDRESS"
+export JSON_OUTPUT=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 create_tx --to $TO_ADDRESS:$AMOUNT --external_policy "{\"$CHANGE_ID\": [0,1]}")
+echo "Fee is `echo $JSON_OUTPUT | jq -r '.details.fee'`"
 echo
-export UNSIGNED_PSBT=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 create_tx --to $TO_ADDRESS:$AMOUNT --external_policy "{\"$CHANGE_ID\": [0,1]}" | jq -r '.psbt')
+export UNSIGNED_PSBT=$(echo $JSON_OUTPUT | jq -r '.psbt')
 
 env | grep UNSIGNED
 echo
