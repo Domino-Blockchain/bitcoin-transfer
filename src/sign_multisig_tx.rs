@@ -13,8 +13,7 @@ use crate::{
     },
     bdk_cli_struct::BdkCli,
     mempool::get_mempool_url,
-    serde_convert,
-    AppState,
+    serde_convert, AppState,
 };
 
 #[allow(dead_code)]
@@ -29,8 +28,6 @@ pub async fn sign_multisig_tx(
     State(state): State<AppState>,
     Json(request): Json<SignMultisigTxRequest>,
 ) -> Json<serde_json::Value> {
-    dbg!("POST sign_multisig_tx");
-
     let btc_network = Network::from_str(&std::env::var("BTC_NETWORK").unwrap()).unwrap();
     let cli_path = PathBuf::from(std::env::var("BDK_CLI_PATH_DEFAULT").unwrap());
     let cli_path_patched = PathBuf::from(std::env::var("BDK_CLI_PATH_PATCHED").unwrap());
@@ -62,8 +59,8 @@ pub async fn sign_multisig_tx(
     //     }));
     // };
 
-    dbg!(&transaction);
-    dbg!(&key);
+    info!("transaction: {:#?}", &transaction);
+    info!("key: {:#?}", &key);
     let _transaction: serde_json::Value = serde_convert(&transaction);
     let key: serde_json::Value = serde_convert(&key);
 
@@ -76,13 +73,15 @@ pub async fn sign_multisig_tx(
     let private_key_00: serde_json::Value =
         serde_json::from_str(key["private_key_00"].as_str().unwrap()).unwrap();
     let xprv_00 = &private_key_00["xprv"].as_str().unwrap();
-    let descriptor_00 = format!("{xprv_00}/84h/1h/0h/0/*");
+    // let descriptor_00 = format!("{xprv_00}/84h/1h/0h/0/*");
 
     let xpub_00 = key["public_key_00"].as_str().unwrap();
     let xpub_01 = key["public_key_01"].as_str().unwrap();
     let xpub_02 = key["public_key_02"].as_str().unwrap();
+    let xpub_03 = key["public_key_03"].as_str().unwrap();
 
     let key_arn = key["public_key_arn_01"].as_str().unwrap();
+    let key_name = key["public_key_name_03"].as_str().unwrap();
 
     // TODO: check constrains, check burn
 
@@ -92,33 +91,49 @@ pub async fn sign_multisig_tx(
     // let amount = "400";
 
     let onesig_psbt = cli
-        .onesig(xprv_00, xpub_01, xpub_02, to_address, amount)
+        .onesig(xprv_00, xpub_01, xpub_02, xpub_03, to_address, amount)
         .await;
     // let onesig_psbt = onesig(&descriptor_00, xpub_01, xpub_02, to_address, amount).await;
-    dbg!(&onesig_psbt);
+    info!("onesig_psbt: {:#?}", &onesig_psbt);
 
-    let (secondsig_psbt, multi_descriptor_01) = cli
-        .secondsig(xpub_00, xpub_01, xpub_02, &onesig_psbt, key_arn)
+    let secondsig_psbt = cli
+        .secondsig(xpub_00, xpub_01, xpub_02, xpub_03, &onesig_psbt, key_arn)
         .await;
+    info!("secondsig_psbt: {:#?}", &secondsig_psbt);
     // let (secondsig_psbt, multi_descriptor_01) =
     //     secondsig(xpub_00, xpub_01, xpub_02, &onesig_psbt, key_arn).await;
+
+    let thirdsig_psbt = cli
+        .thirdsig(
+            xpub_00,
+            xpub_01,
+            xpub_02,
+            xpub_03,
+            &secondsig_psbt,
+            key_name,
+        )
+        .await;
+    info!("thirdsig_psbt: {:#?}", &thirdsig_psbt);
 
     // let account_address = get_account_address(Pubkey::from_str(&mint_address).unwrap());
     // info!("Burn system account_address: {account_address:?}");
     // let burn_output = spl_token(&["burn", &account_address.to_string(), &withdraw_amount]);
-    // dbg!(&burn_output);
+    // info!("burn_output: {:#?}", &burn_output);
 
-    let tx_id = cli.send(&multi_descriptor_01, &secondsig_psbt).await;
+    let tx_id = cli
+        .send(xpub_00, xpub_01, xpub_02, xpub_03, &thirdsig_psbt)
+        .await;
     // let tx_id = send(&multi_descriptor_01, &secondsig_psbt).await;
 
-    info!("POST sign_multisig_tx finish");
-
     let mempool_url = get_mempool_url();
+
+    let tx_link = format!("{mempool_url}/tx/{tx_id}");
+    info!("transaction sent: {tx_link}");
     Json(json!({
         "status": "ok",
-        "secondsig_psbt": secondsig_psbt,
+        "thirdsig_psbt": thirdsig_psbt,
         "tx_id": tx_id,
-        "tx_link": format!("{mempool_url}/tx/{tx_id}"),
+        "tx_link": tx_link,
     }))
 }
 
@@ -139,11 +154,11 @@ pub async fn onesig(
 
     // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sync
     let sync_output = bdk_cli_wallet_temp(multi_descriptor_00, &["sync"]).await;
-    dbg!(sync_output);
+    info!("sync_output: {:#?}", sync_output);
 
     // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 get_balance | jq
     let get_balance_result = bdk_cli_wallet_temp(multi_descriptor_00, &["get_balance"]).await;
-    dbg!(get_balance_result);
+    info!("get_balance_result: {:#?}", get_balance_result);
 
     // export CHANGE_ID=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 policies | jq -r ".external.id")
     let change_id_ = bdk_cli_wallet_temp(multi_descriptor_00, &["policies"]).await;

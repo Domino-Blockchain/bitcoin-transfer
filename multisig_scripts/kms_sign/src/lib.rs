@@ -159,7 +159,12 @@ pub async fn sign_google(digest: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error:
         .get()
         .asymmetric_sign(AsymmetricSignRequest {
             name: key_name,
-            data: digest,
+            digest: Some(gcloud_sdk::google::cloud::kms::v1::Digest {
+                digest: Some(gcloud_sdk::google::cloud::kms::v1::digest::Digest::Sha256(
+                    digest,
+                )),
+            }),
+            // data: digest,
             ..Default::default()
         })
         .await?;

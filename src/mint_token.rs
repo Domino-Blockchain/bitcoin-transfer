@@ -3,6 +3,7 @@ use std::str::FromStr;
 use axum::Json;
 use domichain_program::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::spl_token;
 
@@ -67,7 +68,7 @@ pub async fn mint_token_inner(amount: &str, address: &str) -> anyhow::Result<Min
     let amount_satomis: u64 = amount.parse().unwrap();
     let amount_domis = tokens_to_ui_amount(amount_satomis, 8);
     let amount_domis = amount_domis.to_string();
-    dbg!(&amount_domis);
+    info!("amount_domis: {}", &amount_domis);
 
     let mut out = Vec::new();
     let create_token_result = spl_token(&["create-token", "--decimals", "8"]);

@@ -29,8 +29,12 @@ cargo install bdk-cli --features compiler,esplora-ureq
 # Edit `aws_kms_policy.json` file with admin user instead `user@company.com`
 python create_aws_keys.py
 
+# Create Google KMS keys
+python create_google_keys.py
+
 # Get info about BTC KMS keys
-python get_aws_keys.py > kms_keys.json
+python get_aws_keys.py > aws_kms_keys.json
+python3 get_google_keys.py > google_kms_keys.json
 
 # setup mongodb key
 cargo run --bin generate_master_key
@@ -43,7 +47,8 @@ npm run start
 # DOMI Testnet URL: http://103.106.59.69:8899
 
 # btc_server
-cargo run -r --bin bitcoin_transfer
+cargo run --release --bin bitcoin_transfer >> ~/btc_logs.txt
+cat btc_logs.txt | rg -v pong | rg -v conversions | rg -v loadingIndicators
 
 # db: btc
 # collection: keys

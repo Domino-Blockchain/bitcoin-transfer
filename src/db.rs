@@ -14,7 +14,9 @@ use mongodb::results::{InsertOneResult, UpdateResult};
 use mongodb::{options::ClientOptions, Client};
 use mongodb::{Collection, Namespace};
 use primitive_types::U256;
+use serde::Deserialize;
 use tokio::fs::read_to_string;
+use tracing::info;
 
 #[allow(dead_code)]
 pub struct DB {
@@ -334,7 +336,7 @@ impl DB {
                 mint_addresess.push(a.clone());
             }
         }
-        dbg!(mint_addresess);
+        info!("mint_addresess: {:#?}", mint_addresess);
 
         let transaction = transactions_collection
             .find_one(
@@ -353,7 +355,8 @@ impl DB {
                 }),
                 None,
             )
-            .await?.unwrap();
+            .await?
+            .unwrap();
         Ok((transaction, key))
     }
 
@@ -404,25 +407,61 @@ impl DB {
             .await
     }
 
-    pub async fn get_kms_pubkey(&self, hash: U256) -> (String, String, String) {
-        let file = File::open("kms_keys.json").unwrap();
-        let reader = BufReader::new(file);
-        let keys: serde_json::Value = serde_json::de::from_reader(reader).unwrap();
-        let keys_list = keys.as_array().unwrap();
+    pub async fn get_aws_kms_pubkey(&self, hash: U256) -> (String, String, String) {
+        #[allow(dead_code)]
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct AwsKmsKey {
+            alias_name: String,
+            alias_arn: String,
+            target_key_id: String,
+            creation_date: String,
+            last_updated_date: String,
+            key_arn: String,
+            public_key: String,
+        }
 
-        let index: U256 = hash.checked_rem(keys_list.len().into()).unwrap();
+        let file = File::open("aws_kms_keys.json").unwrap();
+        let reader = BufReader::new(file);
+        let keys: Vec<AwsKmsKey> = serde_json::de::from_reader(reader).unwrap();
+
+        let index: U256 = hash.checked_rem(keys.len().into()).unwrap();
         let index: usize = index.try_into().unwrap();
 
-        let key = &keys_list[index];
-        let key_name = key["AliasName"].as_str().unwrap().to_string();
-        let key_arn = key["KeyArn"].as_str().unwrap().to_string();
-        let pubkey_str = key["PublicKey"].as_str().unwrap().to_string();
+        let key = keys.into_iter().nth(index).unwrap();
+        let key_name = key.alias_name;
+        let key_arn = key.key_arn;
+        let pubkey_str = key.public_key;
 
         let compressed_pubkey = get_compressed_pubkey(&pubkey_str);
-        // let pubkeys = ["02002c5c77d7951eaa1818a7b409181b2e4a81e93e6eb44c6fe92c637c492725bb"];
-        // pubkeys[index].to_string()
 
         (key_name, key_arn, compressed_pubkey)
+    }
+
+    pub async fn get_google_kms_pubkey(&self, hash: U256) -> (String, String) {
+        #[allow(dead_code)]
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct GoogleKmsKey {
+            create_time: String,
+            name: String,
+            public_key: String,
+        }
+
+        let file = File::open("google_kms_keys.json").unwrap();
+        let reader = BufReader::new(file);
+        let keys: Vec<GoogleKmsKey> = serde_json::de::from_reader(reader).unwrap();
+
+        let index: U256 = hash.checked_rem(keys.len().into()).unwrap();
+        let index: usize = index.try_into().unwrap();
+
+        let key = keys.into_iter().nth(index).unwrap();
+        let key_name = key.name;
+        let pubkey_str = key.public_key;
+
+        let compressed_pubkey = get_compressed_pubkey(&pubkey_str);
+
+        (key_name, compressed_pubkey)
     }
 
     pub async fn get_all_multisig_addresses(&self) -> Vec<String> {

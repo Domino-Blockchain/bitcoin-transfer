@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::from_value;
 use tracing::info;
 
-use crate::bdk_cli::{exec_with_json_output, try_exec_with_json_output, WALLET_DIR_PERMIT};
+use crate::{
+    bdk_cli::{exec_with_json_output, try_exec_with_json_output, WALLET_DIR_PERMIT},
+    mempool::get_recommended_fee_rate,
+};
 
 #[derive(Debug)]
 pub struct BdkCli {
@@ -88,12 +91,14 @@ impl BdkCli {
         xprv_00: &str,
         xpub_01: &str,
         xpub_02: &str,
+        xpub_03: &str,
     ) -> String {
         let descriptor_00 = format!("{xprv_00}/84h/1h/0h/0/*");
         // let _descriptor_02 = format!("{xprv_02}/84h/1h/0h/0/*");
 
-        // export MULTI_DESCRIPTOR_00=$(bdk-cli compile "thresh(2,pk($DESCRIPTOR_00),pk($XPUB_01),pk($XPUB_02))" | jq -r '.descriptor')
-        let desc_00 = format!("thresh(2,pk({descriptor_00}),pk({xpub_01}),pk({xpub_02}))");
+        // export MULTI_DESCRIPTOR_00=$(bdk-cli compile "thresh(3,pk($DESCRIPTOR_00),pk($XPUB_01),pk($XPUB_02))" | jq -r '.descriptor')
+        let desc_00 =
+            format!("thresh(3,pk({descriptor_00}),pk({xpub_01}),pk({xpub_02}),pk({xpub_03}))");
         let multi_descriptor_00_ = exec_with_json_output(
             &["--network", &self.network.to_string(), "compile", &desc_00],
             &self.cli_path,
@@ -111,9 +116,10 @@ impl BdkCli {
         xpub_00: &str,
         xpub_01: &str,
         xpub_02: &str,
+        xpub_03: &str,
     ) -> String {
-        // export MULTI_DESCRIPTOR_01=$(bdk-cli compile "thresh(2,pk($XPUB_00),pk($XPUB_01),pk($XPUB_02))" | jq -r '.descriptor')
-        let desc_01 = format!("thresh(2,pk({xpub_00}),pk({xpub_01}),pk({xpub_02}))");
+        // export MULTI_DESCRIPTOR_01=$(bdk-cli compile "thresh(3,pk($XPUB_00),pk($XPUB_01),pk($XPUB_02))" | jq -r '.descriptor')
+        let desc_01 = format!("thresh(3,pk({xpub_00}),pk({xpub_01}),pk({xpub_02}),pk({xpub_03}))");
         let multi_descriptor_01_ = exec_with_json_output(
             &["--network", &self.network.to_string(), "compile", &desc_01],
             &self.cli_path,
@@ -198,10 +204,13 @@ impl BdkCli {
         xprv_00: &str,
         xpub_01: &str,
         xpub_02: &str,
+        xpub_03: &str,
         to_address: &str,
         amount: &str,
     ) -> String {
-        let multi_descriptor_00 = self.get_multi_descriptor(xprv_00, xpub_01, xpub_02).await;
+        let multi_descriptor_00 = self
+            .get_multi_descriptor(xprv_00, xpub_01, xpub_02, xpub_03)
+            .await;
 
         let onesig_result = self
             .with_temp_wallet_dir(|| async {
@@ -213,7 +222,7 @@ impl BdkCli {
                     &self.cli_path,
                 )
                 .await;
-                info!("sync_output: {:?}", sync_output);
+                info!("Sync output: {:?}", sync_output);
                 info!("Sync took: {:?}", start_sync.elapsed());
 
                 // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 get_balance | jq
@@ -246,7 +255,10 @@ impl BdkCli {
                 .await;
                 let change_id = change_id_["external"]["id"].as_str().unwrap();
 
-                // Deduct the fees from the provided amount
+                let fee_rate = get_recommended_fee_rate().await;
+
+                // Trying to calculate `send_amount`. Creating test transaction to figure out fees.
+                // Then deduct the fees from the provided amount.
                 let test_fees_full_amount = try_exec_with_json_output(
                     self.wallet_args(
                         &multi_descriptor_00,
@@ -255,13 +267,16 @@ impl BdkCli {
                             "--to",
                             &format!("{to_address}:{amount}"),
                             "--external_policy",
-                            &format!("{{\"{change_id}\": [0,1]}}"),
+                            &format!("{{\"{change_id}\": [0,1,3]}}"),
+                            "--fee_rate",
+                            &format!("{}", fee_rate.as_sat_per_vb()),
                         ],
                     )
                     .iter(),
                     &self.cli_path,
                 )
                 .await;
+                // Could fail with error message
                 let fee = match test_fees_full_amount {
                     Ok(output_json) => {
                         let details = &output_json["details"];
@@ -306,7 +321,9 @@ impl BdkCli {
                             "--to",
                             &format!("{to_address}:{send_amount}"),
                             "--external_policy",
-                            &format!("{{\"{change_id}\": [0,1]}}"),
+                            &format!("{{\"{change_id}\": [0,1,3]}}"),
+                            "--fee_rate",
+                            &format!("{}", fee_rate.as_sat_per_vb()),
                         ],
                     )
                     .iter(),
@@ -346,15 +363,16 @@ impl BdkCli {
         xpub_00: &str,
         xpub_01: &str,
         xpub_02: &str,
+        xpub_03: &str,
         onesig_psbt: &str,
         key_arn: &str,
-    ) -> (String, String) {
+    ) -> String {
         // export MULTI_DESCRIPTOR_01=$(cat multi_descriptor_01.json)
         // export ONESIG_PSBT=$(cat onesig_psbt.json)
         // export KEY_ARN="arn:aws:kms:us-east-2:571922870935:key/17be5d9e-d752-4350-bbc1-68993fa25a4f"
 
         let multi_descriptor_01 = self
-            .get_pub_multi_descriptor(xpub_00, xpub_01, xpub_02)
+            .get_pub_multi_descriptor(xpub_00, xpub_01, xpub_02, xpub_03)
             .await;
 
         // export SECONDSIG_PSBT=$(./bdk-cli/target/release/bdk-cli wallet --aws_kms $KEY_ARN --wallet wallet_name_msd01 --descriptor $MULTI_DESCRIPTOR_01 sign --psbt $ONESIG_PSBT | jq -r '.psbt')
@@ -373,34 +391,87 @@ impl BdkCli {
                 info!("secondsig_psbt: {secondsig_psbt_:?}");
                 let secondsig_psbt = secondsig_psbt_["psbt"].as_str().unwrap();
 
-                // if [ "$ONESIG_PSBT" = "$SECONDSIG_PSBT" ]; then
-                //     echo "ERROR: Secondsig don't change PSBT"
-                //     exit 1
-                // fi
-                // assert_ne!(onesig_psbt, secondsig_psbt);
                 if onesig_psbt == secondsig_psbt {
-                    return Err("ERROR: Secondsig don't change PSBT");
+                    return Err("Secondsig don't change PSBT");
                 }
 
-                if !secondsig_psbt_["is_finalized"].as_bool().unwrap() {
-                    return Err("ERROR: Still not finalized after secondsig");
-                }
+                // if !secondsig_psbt_["is_finalized"].as_bool().unwrap() {
+                //     return Err("ERROR: Still not finalized after secondsig");
+                // }
 
-                Ok((secondsig_psbt.to_string(), multi_descriptor_01))
+                Ok(secondsig_psbt.to_string())
             })
             .await;
         result.unwrap()
     }
 
-    pub async fn send(&self, multi_descriptor_01: &str, secondsig_psbt: &str) -> String {
+    pub async fn thirdsig(
+        &self,
+        xpub_00: &str,
+        xpub_01: &str,
+        xpub_02: &str,
+        xpub_03: &str,
+        secondsig_psbt: &str,
+        key_name: &str,
+    ) -> String {
+        // export MULTI_DESCRIPTOR_01=$(cat multi_descriptor_01.json)
+        // export ONESIG_PSBT=$(cat onesig_psbt.json)
+        // export KEY_ARN="arn:aws:kms:us-east-2:571922870935:key/17be5d9e-d752-4350-bbc1-68993fa25a4f"
+
+        let pub_multi_descriptor = self
+            .get_pub_multi_descriptor(xpub_00, xpub_01, xpub_02, xpub_03)
+            .await;
+
+        // export SECONDSIG_PSBT=$(./bdk-cli/target/release/bdk-cli wallet --aws_kms $KEY_ARN --wallet wallet_name_msd01 --descriptor $MULTI_DESCRIPTOR_01 sign --psbt $ONESIG_PSBT | jq -r '.psbt')
+
+        let result = self
+            .with_temp_wallet_dir(|| async {
+                let thirdsig_psbt_ = exec_with_json_output(
+                    self.wallet_args(
+                        &pub_multi_descriptor,
+                        &["--google_kms", key_name, "sign", "--psbt", secondsig_psbt],
+                    )
+                    .iter(),
+                    &self.cli_path_patched,
+                )
+                .await;
+                info!("thirdsig_psbt: {thirdsig_psbt_:?}");
+                let thirdsig_psbt = thirdsig_psbt_["psbt"].as_str().unwrap();
+
+                if secondsig_psbt == thirdsig_psbt {
+                    return Err("Thirdsig don't change PSBT");
+                }
+
+                if !thirdsig_psbt_["is_finalized"].as_bool().unwrap() {
+                    return Err("ERROR: Still not finalized after secondsig");
+                }
+
+                Ok(thirdsig_psbt.to_string())
+            })
+            .await;
+        result.unwrap()
+    }
+
+    pub async fn send(
+        &self,
+        xpub_00: &str,
+        xpub_01: &str,
+        xpub_02: &str,
+        xpub_03: &str,
+        thirdsig_psbt: &str,
+    ) -> String {
+        let pub_multi_descriptor = self
+            .get_pub_multi_descriptor(xpub_00, xpub_01, xpub_02, xpub_03)
+            .await;
+
         // # broadcast
         // export TX_ID=$(bdk-cli wallet --wallet wallet_name_msd01 --descriptor $MULTI_DESCRIPTOR_01 broadcast --psbt $SECONDSIG_PSBT)
         // echo $TX_ID
         self.with_temp_wallet_dir(|| async {
             let tx_id_ = exec_with_json_output(
                 self.wallet_args_online(
-                    multi_descriptor_01,
-                    &["broadcast", "--psbt", secondsig_psbt],
+                    &pub_multi_descriptor,
+                    &["broadcast", "--psbt", thirdsig_psbt],
                 )
                 .iter(),
                 &self.cli_path,

@@ -273,7 +273,8 @@ pub async fn watch_address(address: String, db: Arc<DB>) {
                                 // - address already exists
                                 let mint_result =
                                     mint_token_inner(&value.to_string(), domi_address).await;
-                                let mint_result = dbg!(mint_result).unwrap();
+                                info!("mint_result: {mint_result:#?}");
+                                let mint_result = mint_result.unwrap();
 
                                 // TODO: save mint result
                                 let res = db

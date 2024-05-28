@@ -77,8 +77,8 @@ async fn main() {
 
     let ws_handle = tokio::spawn(async move {
         let all_multisig_addresses = db_clone.get_all_multisig_addresses().await;
-        dbg!(&all_multisig_addresses);
-        dbg!(all_multisig_addresses.len());
+        info!("&all_multisig_addresses = {:#?}", &all_multisig_addresses);
+        info!("all_multisig_addresses.len() = {:#?}", all_multisig_addresses.len());
         // vec!["tb1qalaejg4ve63htr8pxfr9l76cq8qqq52pgrevwy2vdqywsxlxegesh0mh6n"]
 
         for (_i, chunk) in all_multisig_addresses.chunks(10).enumerate() {
@@ -92,9 +92,10 @@ async fn main() {
 
     let app = Router::new()
         .route("/get_address_from_db", post(get_address_from_db))
+        .route("/sign_multisig_tx", post(sign_multisig_tx))
+        // Unused
         .route("/watch_tx", post(watch_tx))
         .route("/get_mint_info", post(get_mint_info))
-        .route("/sign_multisig_tx", post(sign_multisig_tx))
         // Deprecated
         .route(
             "/get_address",

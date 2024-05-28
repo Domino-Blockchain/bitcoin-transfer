@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::fs::read_to_string;
+use tracing::info;
 
 use crate::{bdk_cli_struct::BdkCli, serde_convert, watch_addresses::watch_address, AppState};
 
@@ -74,13 +75,19 @@ pub async fn new_multisig_address(state: &AppState, domi_address: String) -> Str
     // let xpub_00 = get_pubkey(xprv_00).await.xpub;
 
     let hash = get_hash(xpub_00.as_bytes());
-    let (pub_name_01, pub_arn_01, xpub_01) = state.db.get_kms_pubkey(hash).await;
+    let (pub_name_01, pub_arn_01, xpub_01) = state.db.get_aws_kms_pubkey(hash).await;
 
     // let xpub_02 = cli.get_pubkey(xprv_02).await;
     let xpub_02 = key_02["xpub"].as_str().unwrap();
     // let xpub_02 = get_pubkey(&xprv_02).await.xpub;
 
-    let multi_descriptor_00 = cli.get_multi_descriptor(xprv_00, &xpub_01, &xpub_02).await;
+    let (pub_name_03, xpub_03) = state.db.get_google_kms_pubkey(hash).await;
+    // let (pub_name_03, xpub_03) = (
+    //     "projects/domichain-archive/locations/global/keyRings/TestKeyring/cryptoKeys/TestKey1/cryptoKeyVersions/1",
+    //     "036f0694a43f05fd642f1fe0b3bd023b1322df39080c5624a5ba8bede20fcd9dc2",
+    // );
+
+    let multi_descriptor_00 = cli.get_multi_descriptor(xprv_00, &xpub_01, &xpub_02, &xpub_03).await;
     // let descriptor_00 = format!("{xprv_00}/84h/1h/0h/0/*");
     // // let _descriptor_02 = format!("{xprv_02}/84h/1h/0h/0/*");
     // let desc_00 = format!("thresh(2,pk({descriptor_00}),pk({xpub_01}),pk({xpub_02}))");
@@ -98,13 +105,15 @@ pub async fn new_multisig_address(state: &AppState, domi_address: String) -> Str
         "public_key_arn_01": &pub_arn_01,
         "public_key_01": &xpub_01,
         "public_key_02": &xpub_02,
+        "public_key_name_03": &pub_name_03,
+        "public_key_03": &xpub_03,
         "multi_address": &multi_address,
         "domi_address": domi_address,
     };
 
-    dbg!(&to_save_encrypted);
-    dbg!(&to_save);
-    dbg!(&multi_address);
+    info!("to_save_encrypted: {:#?}", &to_save_encrypted);
+    info!("to_save: {:#?}", &to_save);
+    info!("multi_address: {:#?}", &multi_address);
 
     state
         .db
