@@ -97,8 +97,8 @@ async fn main() {
 
     let app = Router::new()
         .route("/get_address_from_db", post(get_address_from_db))
-        .route("/sign_multisig_tx", post(sign_multisig_tx))
         .route("/estimate_fee", post(estimate_fee))
+        .route("/sign_multisig_tx", post(sign_multisig_tx))
         // Unused
         .route("/watch_tx", post(watch_tx))
         .route("/get_mint_info", post(get_mint_info))
