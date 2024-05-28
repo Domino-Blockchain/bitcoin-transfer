@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use axum::{extract::State, Json};
-use bdk::bitcoin::Network;
+use bdk::{bitcoin::Network, FeeRate};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::fs::remove_dir_all;
@@ -12,16 +12,18 @@ use crate::{
         bdk_cli, bdk_cli_wallet, bdk_cli_wallet_patched, bdk_cli_wallet_temp, WALLET_DIR_PERMIT,
     },
     bdk_cli_struct::BdkCli,
-    mempool::get_mempool_url,
+    estimate_fee::get_vbytes,
+    mempool::{get_mempool_url, get_recommended_fee_rate},
     serde_convert, AppState,
 };
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct SignMultisigTxRequest {
     mint_address: String,
     withdraw_address: String, // BTC
     withdraw_amount: String,
+    fee_rate: Option<f32>,
+    vbytes: Option<u64>,
 }
 
 pub async fn sign_multisig_tx(
@@ -46,18 +48,20 @@ pub async fn sign_multisig_tx(
         mint_address,
         withdraw_address,
         withdraw_amount,
+        fee_rate,
+        vbytes,
     } = request;
 
-    let (transaction, key) = state.db.find_by_mint_address(&mint_address).await.unwrap();
-    // let meta = if let Some(meta) =  {
-    //     meta
-    // } else {
-    //     // Document not found
-    //     return Json(json!({
-    //         "status": "error",
-    //         "message": format!("Mint address not found: {mint_address}"),
-    //     }));
-    // };
+    let (transaction, key) =
+        if let Some(data) = state.db.find_by_mint_address(&mint_address).await.unwrap() {
+            data
+        } else {
+            // Document not found
+            return Json(json!({
+                "status": "error",
+                "message": format!("Mint address not found: {mint_address}"),
+            }));
+        };
 
     info!("transaction: {:#?}", &transaction);
     info!("key: {:#?}", &key);
@@ -90,11 +94,30 @@ pub async fn sign_multisig_tx(
     // let to_address = "tb1qjk7wqccmetsngh9e0zff73rhsqny568g5fs758";
     // let amount = "400";
 
-    let onesig_psbt = cli
-        .onesig(xprv_00, xpub_01, xpub_02, xpub_03, to_address, amount)
+    let fee_rate = if let Some(sat_per_vb) = fee_rate {
+        FeeRate::from_sat_per_vb(sat_per_vb)
+    } else {
+        get_recommended_fee_rate().await
+    };
+
+    let (onesig_psbt, fee) = cli
+        .onesig(
+            xprv_00, xpub_01, xpub_02, xpub_03, to_address, amount, fee_rate,
+        )
         .await;
     // let onesig_psbt = onesig(&descriptor_00, xpub_01, xpub_02, to_address, amount).await;
     info!("onesig_psbt: {:#?}", &onesig_psbt);
+
+    if let Some(expected_vbytes) = vbytes {
+        let actual_vbytes = get_vbytes(fee, fee_rate);
+
+        if actual_vbytes != expected_vbytes {
+            return Json(json!({
+                "status": "error",
+                "message": format!("vbytes is different from expected: expected {expected_vbytes}, found {actual_vbytes}"),
+            }));
+        }
+    }
 
     let secondsig_psbt = cli
         .secondsig(xpub_00, xpub_01, xpub_02, xpub_03, &onesig_psbt, key_arn)

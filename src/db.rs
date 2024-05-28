@@ -321,7 +321,10 @@ impl DB {
         Ok(meta)
     }
 
-    pub async fn find_by_mint_address(&self, mint_address: &str) -> Result<(Document, Document)> {
+    pub async fn find_by_mint_address(
+        &self,
+        mint_address: &str,
+    ) -> Result<Option<(Document, Document)>> {
         let DB {
             transactions_collection,
             keys_collection,
@@ -329,16 +332,19 @@ impl DB {
         } = self;
 
         // Dbg all mint addresses
-        let mut cursor = transactions_collection.find(None, None).await.unwrap();
-        let mut mint_addresess = vec![];
-        while let Some(document) = cursor.try_next().await.unwrap() {
-            if let Some(a) = document.get("mint_address") {
-                mint_addresess.push(a.clone());
+        let dbg_all_mint_addresses = true;
+        if dbg_all_mint_addresses {
+            let mut cursor = transactions_collection.find(None, None).await.unwrap();
+            let mut mint_addresess = vec![];
+            while let Some(document) = cursor.try_next().await.unwrap() {
+                if let Some(a) = document.get("mint_address") {
+                    mint_addresess.push(a.clone());
+                }
             }
+            info!("mint_addresess: {:#?}", mint_addresess);
         }
-        info!("mint_addresess: {:#?}", mint_addresess);
 
-        let transaction = transactions_collection
+        let transaction = if let Some(transaction) = transactions_collection
             .find_one(
                 Some(doc! {
                     "mint_address": mint_address,
@@ -346,9 +352,13 @@ impl DB {
                 None,
             )
             .await?
-            .unwrap();
+        {
+            transaction
+        } else {
+            return Ok(None);
+        };
         let multi_address = transaction.get("multi_address").unwrap().as_str().unwrap();
-        let key = keys_collection
+        if let Some(key) = keys_collection
             .find_one(
                 Some(doc! {
                     "multi_address": multi_address,
@@ -356,8 +366,11 @@ impl DB {
                 None,
             )
             .await?
-            .unwrap();
-        Ok((transaction, key))
+        {
+            Ok(Some((transaction, key)))
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn update_by_deposit_address(

@@ -20,6 +20,9 @@ TODO:
 
 - Install libmongocrypt https://www.mongodb.com/docs/manual/core/csfle/reference/libmongocrypt/
 ```sh
+# Dump of MongoDB
+mongodump --uri="mongodb://localhost:27017"
+
 # Install the BDK CLI
 cargo install bdk-cli --features compiler,electrum
 # OR

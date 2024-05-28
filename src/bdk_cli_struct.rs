@@ -1,14 +1,13 @@
-use std::{path::PathBuf, time::Instant};
+use std::{borrow::Cow, path::PathBuf, time::Instant};
 
-use bdk::bitcoin::Network;
+use bdk::{bitcoin::Network, FeeRate};
 use futures::Future;
 use serde::{Deserialize, Serialize};
 use serde_json::from_value;
 use tracing::info;
 
 use crate::{
-    bdk_cli::{exec_with_json_output, try_exec_with_json_output, WALLET_DIR_PERMIT},
-    mempool::get_recommended_fee_rate,
+    bdk_cli::{exec_with_json_output, try_exec_with_json_output, WALLET_DIR_PERMIT}, estimate_fee::get_vbytes, mempool::get_recommended_fee_rate
 };
 
 #[derive(Debug)]
@@ -169,14 +168,29 @@ impl BdkCli {
     }
 
     fn wallet_args_online(&self, descriptor: &str, args: &[&str]) -> Vec<String> {
-        // https://github.com/Blockstream/esplora/blob/master/API.md
-        let server = match self.network {
-            Network::Bitcoin => "https://blockstream.info/api",
-            Network::Testnet => "https://blockstream.info/testnet/api",
-            Network::Signet => todo!(),
-            Network::Regtest => todo!(),
-            _ => todo!(),
+        let is_electrum = true;
+
+        let server = if is_electrum {
+            // cargo install bdk-cli --features compiler,electrum
+            match self.network {
+                Network::Bitcoin => "ssl://electrum.blockstream.info:50002",
+                Network::Testnet => "ssl://electrum.blockstream.info:60002",
+                Network::Signet => todo!(),
+                Network::Regtest => todo!(),
+                _ => todo!(),
+            }
+        } else {
+            // cargo install bdk-cli --features compiler,esplora-ureq
+            // https://github.com/Blockstream/esplora/blob/master/API.md
+            match self.network {
+                Network::Bitcoin => "https://blockstream.info/api",
+                Network::Testnet => "https://blockstream.info/testnet/api",
+                Network::Signet => todo!(),
+                Network::Regtest => todo!(),
+                _ => todo!(),
+            }
         };
+
         let network = self.network.to_string();
         let mut cli_args = vec![
             "--network",
@@ -184,8 +198,8 @@ impl BdkCli {
             "wallet",
             "--server",
             server,
-            "--stop_gap",
-            "1",
+            // "--stop_gap", // Slows down electrum
+            // "1",
             // "--conc",
             // "8",
             "--timeout",
@@ -199,6 +213,114 @@ impl BdkCli {
         cli_args.into_iter().map(|s| s.to_owned()).collect()
     }
 
+    pub async fn estimate_fee(
+        &self,
+        multi_descriptor_00: &str,
+        to_address: &str,
+        amount: &str,
+    ) -> (u64, FeeRate, u64) {
+        let estimate_fee_result = self
+            .with_temp_wallet_dir(|| async {
+                // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sync
+                let start_sync = Instant::now();
+                let sync_output = exec_with_json_output(
+                    self.wallet_args_online(&multi_descriptor_00, &["sync"])
+                        .iter(),
+                    &self.cli_path,
+                )
+                .await;
+                info!("Sync output: {:?}", sync_output);
+                info!("Sync took: {:?}", start_sync.elapsed());
+
+                // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 get_balance | jq
+                let get_balance_result = exec_with_json_output(
+                    self.wallet_args(&multi_descriptor_00, &["get_balance"])
+                        .iter(),
+                    &self.cli_path,
+                )
+                .await;
+                info!("get_balance_result: {get_balance_result:?}");
+
+                let confirmed = get_balance_result["satoshi"]["confirmed"]
+                    .as_number()
+                    .unwrap()
+                    .as_u64()
+                    .unwrap();
+                if confirmed == 0 {
+                    return Err("Confirmed balance is zero");
+                }
+                let amount: u64 = amount.parse().unwrap();
+                if amount > confirmed {
+                    return Err("Confirmed balance less than withdraw amount");
+                }
+
+                // export CHANGE_ID=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 policies | jq -r ".external.id")
+                let change_id_ = exec_with_json_output(
+                    self.wallet_args(&multi_descriptor_00, &["policies"]).iter(),
+                    &self.cli_path,
+                )
+                .await;
+                let change_id = change_id_["external"]["id"].as_str().unwrap();
+
+                let fee_rate = get_recommended_fee_rate().await;
+
+                // Trying to calculate `send_amount`. Creating test transaction to figure out fees.
+                // Then deduct the fees from the provided amount.
+                let test_fees_full_amount = try_exec_with_json_output(
+                    self.wallet_args(
+                        &multi_descriptor_00,
+                        &[
+                            "create_tx",
+                            "--to",
+                            &format!("{to_address}:{amount}"),
+                            "--external_policy",
+                            &format!("{{\"{change_id}\": [0,1,3]}}"),
+                            "--fee_rate",
+                            &format!("{}", fee_rate.as_sat_per_vb()),
+                        ],
+                    )
+                    .iter(),
+                    &self.cli_path,
+                )
+                .await;
+                // Could fail with error message
+                let fee = match test_fees_full_amount {
+                    Ok(output_json) => {
+                        let details = &output_json["details"];
+                        let fee = details["fee"].as_number().unwrap().as_u64().unwrap();
+                        let sent = details["sent"].as_number().unwrap().as_u64().unwrap();
+                        let received = details["received"].as_number().unwrap().as_u64().unwrap();
+                        let output = sent.checked_sub(received).unwrap();
+                        assert_eq!(output, amount + fee);
+                        fee
+                    }
+                    Err(output) => {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        // Insufficient funds: 5000 sat available of 5147 sat needed
+                        let pattern = " sat available of ";
+                        let (before, after) = stderr.split_once(pattern).unwrap();
+                        let (_rest, sat_available) = before.rsplit_once(' ').unwrap();
+                        let (sat_needed, _rest) = after.split_once(' ').unwrap();
+                        let sat_available: u64 = sat_available.parse().unwrap();
+                        assert_eq!(sat_available, confirmed);
+
+                        let sat_needed: u64 = sat_needed.parse().unwrap();
+
+                        let fee = sat_needed - amount;
+                        fee
+                    }
+                };
+
+                
+                let vbytes = get_vbytes(fee, fee_rate);
+
+                Ok((fee, fee_rate, vbytes))
+            })
+            .await;
+
+        estimate_fee_result.unwrap()
+    }
+
     pub async fn onesig(
         &self,
         xprv_00: &str,
@@ -207,7 +329,8 @@ impl BdkCli {
         xpub_03: &str,
         to_address: &str,
         amount: &str,
-    ) -> String {
+        fee_rate: FeeRate,
+    ) -> (String, u64) {
         let multi_descriptor_00 = self
             .get_multi_descriptor(xprv_00, xpub_01, xpub_02, xpub_03)
             .await;
@@ -254,8 +377,6 @@ impl BdkCli {
                 )
                 .await;
                 let change_id = change_id_["external"]["id"].as_str().unwrap();
-
-                let fee_rate = get_recommended_fee_rate().await;
 
                 // Trying to calculate `send_amount`. Creating test transaction to figure out fees.
                 // Then deduct the fees from the provided amount.
@@ -351,7 +472,7 @@ impl BdkCli {
                 info!("onesig_psbt: {onesig_psbt_:?}");
                 let onesig_psbt = onesig_psbt_["psbt"].as_str().unwrap().to_string();
 
-                Ok(onesig_psbt)
+                Ok((onesig_psbt, fee))
             })
             .await;
 
@@ -426,10 +547,18 @@ impl BdkCli {
 
         let result = self
             .with_temp_wallet_dir(|| async {
+                let key_name: Cow<str> = if !key_name.contains("/cryptoKeyVersions/") {
+                    let mut key_name = key_name.to_string();
+                    key_name.push_str("/cryptoKeyVersions/1");
+                    key_name.into()
+                } else {
+                    key_name.into()
+                };
+
                 let thirdsig_psbt_ = exec_with_json_output(
                     self.wallet_args(
                         &pub_multi_descriptor,
-                        &["--google_kms", key_name, "sign", "--psbt", secondsig_psbt],
+                        &["--google_kms", &key_name, "sign", "--psbt", secondsig_psbt],
                     )
                     .iter(),
                     &self.cli_path_patched,

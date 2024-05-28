@@ -1,8 +1,9 @@
-use std::str::FromStr;
+use std::{str::FromStr, time::Instant};
 
 use bdk::{bitcoin::Network, FeeRate};
 use serde::Deserialize;
 use serde_json::Number;
+use tracing::info;
 
 pub fn get_mempool_url() -> &'static str {
     let btc_network = Network::from_str(&std::env::var("BTC_NETWORK").unwrap()).unwrap();
@@ -38,8 +39,12 @@ struct RecommendedFeesResp {
 }
 
 pub async fn get_recommended_fee_rate() -> FeeRate {
+    // TODO: use https://crates.io/crates/cached
+
     let url = format!("{}/api/v1/fees/recommended", get_mempool_url());
+    let start = Instant::now();
     let resp: RecommendedFeesResp = reqwest::get(url).await.unwrap().json().await.unwrap();
+    info!("get_recommended_fee_rate took: {:?}", start.elapsed());
     let recommended_fee = resp.fastest_fee;
 
     FeeRate::from_sat_per_vb(recommended_fee.as_f64().unwrap() as f32)

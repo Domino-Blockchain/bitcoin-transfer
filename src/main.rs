@@ -5,6 +5,7 @@ mod bdk_cli;
 mod bdk_cli_struct;
 mod db;
 mod deprecated;
+mod estimate_fee;
 mod get_address;
 mod get_mint_info;
 mod log_progress;
@@ -35,6 +36,7 @@ use crate::db::DB;
 use crate::deprecated::{
     burn_token, check_balance, check_destination_balance, get_new_service_address, send_btc_to_user,
 };
+use crate::estimate_fee::estimate_fee;
 use crate::get_address::get_address_from_db;
 use crate::get_mint_info::get_mint_info;
 use crate::mint_token::mint_token;
@@ -78,7 +80,10 @@ async fn main() {
     let ws_handle = tokio::spawn(async move {
         let all_multisig_addresses = db_clone.get_all_multisig_addresses().await;
         info!("&all_multisig_addresses = {:#?}", &all_multisig_addresses);
-        info!("all_multisig_addresses.len() = {:#?}", all_multisig_addresses.len());
+        info!(
+            "all_multisig_addresses.len() = {:#?}",
+            all_multisig_addresses.len()
+        );
         // vec!["tb1qalaejg4ve63htr8pxfr9l76cq8qqq52pgrevwy2vdqywsxlxegesh0mh6n"]
 
         for (_i, chunk) in all_multisig_addresses.chunks(10).enumerate() {
@@ -93,6 +98,7 @@ async fn main() {
     let app = Router::new()
         .route("/get_address_from_db", post(get_address_from_db))
         .route("/sign_multisig_tx", post(sign_multisig_tx))
+        .route("/estimate_fee", post(estimate_fee))
         // Unused
         .route("/watch_tx", post(watch_tx))
         .route("/get_mint_info", post(get_mint_info))
