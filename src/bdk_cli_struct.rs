@@ -229,8 +229,8 @@ impl BdkCli {
                     &self.cli_path,
                 )
                 .await;
-                info!("Sync output: {:?}", sync_output);
-                info!("Sync took: {:?}", start_sync.elapsed());
+                info!("sync output: {:?}", sync_output);
+                info!("sync took: {:?}", start_sync.elapsed());
 
                 // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 get_balance | jq
                 let get_balance_result = exec_with_json_output(
@@ -345,8 +345,8 @@ impl BdkCli {
                     &self.cli_path,
                 )
                 .await;
-                info!("Sync output: {:?}", sync_output);
-                info!("Sync took: {:?}", start_sync.elapsed());
+                info!("sync output: {:?}", sync_output);
+                info!("sync took: {:?}", start_sync.elapsed());
 
                 // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 get_balance | jq
                 let get_balance_result = exec_with_json_output(
@@ -469,7 +469,6 @@ impl BdkCli {
                     &self.cli_path,
                 )
                 .await;
-                info!("onesig_psbt: {onesig_psbt_:?}");
                 let onesig_psbt = onesig_psbt_["psbt"].as_str().unwrap().to_string();
 
                 Ok((onesig_psbt, fee))
@@ -509,7 +508,6 @@ impl BdkCli {
                     &self.cli_path_patched,
                 )
                 .await;
-                info!("secondsig_psbt: {secondsig_psbt_:?}");
                 let secondsig_psbt = secondsig_psbt_["psbt"].as_str().unwrap();
 
                 if onesig_psbt == secondsig_psbt {
@@ -564,7 +562,6 @@ impl BdkCli {
                     &self.cli_path_patched,
                 )
                 .await;
-                info!("thirdsig_psbt: {thirdsig_psbt_:?}");
                 let thirdsig_psbt = thirdsig_psbt_["psbt"].as_str().unwrap();
 
                 if secondsig_psbt == thirdsig_psbt {
