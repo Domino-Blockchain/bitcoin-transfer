@@ -7,7 +7,8 @@ use serde_json::from_value;
 use tracing::info;
 
 use crate::{
-    bdk_cli::{exec_with_json_output, try_exec_with_json_output, WALLET_DIR_PERMIT}, estimate_fee::get_vbytes, mempool::get_recommended_fee_rate
+    bdk_cli::{exec_with_json_output, try_exec_with_json_output, WALLET_DIR_PERMIT},
+    estimate_fee::get_vbytes,
 };
 
 #[derive(Debug)]
@@ -218,7 +219,8 @@ impl BdkCli {
         multi_descriptor_00: &str,
         to_address: &str,
         amount: &str,
-    ) -> (u64, FeeRate, u64) {
+        fee_rate: FeeRate,
+    ) -> (u64, u64) {
         let estimate_fee_result = self
             .with_temp_wallet_dir(|| async {
                 // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sync
@@ -262,8 +264,6 @@ impl BdkCli {
                 .await;
                 let change_id = change_id_["external"]["id"].as_str().unwrap();
 
-                let fee_rate = get_recommended_fee_rate().await;
-
                 // Trying to calculate `send_amount`. Creating test transaction to figure out fees.
                 // Then deduct the fees from the provided amount.
                 let test_fees_full_amount = try_exec_with_json_output(
@@ -302,19 +302,20 @@ impl BdkCli {
                         let (_rest, sat_available) = before.rsplit_once(' ').unwrap();
                         let (sat_needed, _rest) = after.split_once(' ').unwrap();
                         let sat_available: u64 = sat_available.parse().unwrap();
-                        assert_eq!(sat_available, confirmed);
-
                         let sat_needed: u64 = sat_needed.parse().unwrap();
+                        if sat_available == 0 {
+                            return Err("Fee exceeds the available balance");
+                        }
+                        assert_eq!(sat_available, confirmed);
 
                         let fee = sat_needed - amount;
                         fee
                     }
                 };
 
-                
                 let vbytes = get_vbytes(fee, fee_rate);
 
-                Ok((fee, fee_rate, vbytes))
+                Ok((fee, vbytes))
             })
             .await;
 

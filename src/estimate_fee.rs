@@ -2,11 +2,15 @@ use std::{path::PathBuf, str::FromStr};
 
 use axum::{extract::State, Json};
 use bdk::{bitcoin::Network, FeeRate};
-use serde::Deserialize;
-use serde_json::json;
-use tracing::info;
+use serde::{Deserialize, Serialize};
+use serde_json::Number;
+use tracing::{debug, info};
 
-use crate::{bdk_cli_struct::BdkCli, serde_convert, AppState};
+use crate::{
+    bdk_cli_struct::BdkCli,
+    mempool::{get_mempool_url, get_recommended_fee_rates, RecommendedFeesResp},
+    serde_convert, AppState,
+};
 
 #[derive(Deserialize)]
 pub struct EstimateFeeRequest {
@@ -15,10 +19,33 @@ pub struct EstimateFeeRequest {
     withdraw_amount: String,
 }
 
+#[derive(Serialize)]
+pub struct RecommendedFeeRates {
+    fastest_fee: Number,
+    half_hour_fee: Number,
+    hour_fee: Number,
+    economy_fee: Number,
+    minimum_fee: Number,
+}
+
+#[derive(Serialize)]
+pub struct EstimateFeeResponse {
+    status: String,
+    vbytes: u64,
+    recommended_fee_rates: RecommendedFeeRates,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum EstimateFeeResult {
+    Ok(EstimateFeeResponse),
+    Error { status: String, message: String },
+}
+
 pub async fn estimate_fee(
     State(state): State<AppState>,
     Json(request): Json<EstimateFeeRequest>,
-) -> Json<serde_json::Value> {
+) -> Json<EstimateFeeResult> {
     let btc_network = Network::from_str(&std::env::var("BTC_NETWORK").unwrap()).unwrap();
     let cli_path = PathBuf::from(std::env::var("BDK_CLI_PATH_DEFAULT").unwrap());
     let cli_path_patched = PathBuf::from(std::env::var("BDK_CLI_PATH_PATCHED").unwrap());
@@ -44,10 +71,10 @@ pub async fn estimate_fee(
             data
         } else {
             // Document not found
-            return Json(json!({
-                "status": "error",
-                "message": format!("Mint address not found: {mint_address}"),
-            }));
+            return Json(EstimateFeeResult::Error {
+                status: "error".to_string(),
+                message: format!("Mint address not found: {mint_address}"),
+            });
         };
 
     info!("transaction: {:#?}", &transaction);
@@ -75,17 +102,39 @@ pub async fn estimate_fee(
         .get_multi_descriptor(xprv_00, xpub_01, xpub_02, xpub_03)
         .await;
 
-    let (fee, fee_rate, vbytes) = cli
-        .estimate_fee(&multi_descriptor_00, to_address, amount)
-        .await;
-    info!("fee: {}", &fee);
-    info!("fee_rate: {:?}", &fee_rate);
+    let recommended_fee_rates = get_recommended_fee_rates(get_mempool_url()).await;
+    debug!(
+        "get_recommended_fee_rates was_cached: {:?}",
+        recommended_fee_rates.was_cached
+    );
+    let recommended_fee_rates = recommended_fee_rates.value;
+    let recommended_fee = &recommended_fee_rates.fastest_fee;
+    let fee_rate = FeeRate::from_sat_per_vb(recommended_fee.as_f64().unwrap() as f32);
 
-    return Json(json!({
-        "status": "ok",
-        "fee": fee,
-        "fee_rate": fee_rate.as_sat_per_vb(),
-        "vbytes": vbytes,
+    let (fee, vbytes) = cli
+        .estimate_fee(&multi_descriptor_00, to_address, amount, fee_rate)
+        .await;
+    info!("fee: {fee}");
+    info!("fee_rate: {fee_rate:?}");
+    info!("vbytes: {vbytes}");
+
+    let RecommendedFeesResp {
+        fastest_fee,
+        half_hour_fee,
+        hour_fee,
+        economy_fee,
+        minimum_fee,
+    } = recommended_fee_rates;
+    return Json(EstimateFeeResult::Ok(EstimateFeeResponse {
+        status: "ok".to_string(),
+        vbytes,
+        recommended_fee_rates: RecommendedFeeRates {
+            fastest_fee,
+            half_hour_fee,
+            hour_fee,
+            economy_fee,
+            minimum_fee,
+        },
     }));
 }
 

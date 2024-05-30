@@ -6,17 +6,25 @@ POST /get_address_from_db {domi_address: string} -> string
 ```
 
 Get estimated fee of BTC transaction:
+
+`fee = fee_rate * vbytes`
+
 ```
 POST /estimate_fee
 {
     mint_address: string,
     withdraw_address: string, // BTC
-    withdraw_amount: string,
+    withdraw_amount: string
 } -> {
     status: "ok",
-    fee: number,
-    fee_rate: number, // floating point
     vbytes: number,
+    recommended_fee_rates: {
+        fastest_fee: number,
+        half_hour_fee: number,
+        hour_fee: number,
+        economy_fee: number,
+        minimum_fee: number
+    }
 }
 ```
 
@@ -28,11 +36,11 @@ POST /sign_multisig_tx
     withdraw_address: string, // BTC
     withdraw_amount: string,
     fee_rate?: number, // floating point
-    vbytes?: number,
+    vbytes?: number
 } -> {
     status: "ok",
     thirdsig_psbt: string, // Finalized PSBT
     tx_id: string,
-    tx_link: string, // Link to transaction on `mempool.space`
+    tx_link: string // Link to transaction on `mempool.space`
 }
 ```

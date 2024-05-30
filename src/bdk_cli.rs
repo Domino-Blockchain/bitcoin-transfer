@@ -38,7 +38,7 @@ pub async fn try_exec_with_json_output(
         .unwrap();
     if !output.stderr.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("try_exec_with_json_output: {}", stderr);
+        debug!("try_exec_with_json_output stderr: {}", stderr);
     }
     let result = serde_json::Value::from_str(std::str::from_utf8(&output.stdout).unwrap());
     result.map_err(|_| output)
