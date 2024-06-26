@@ -5,6 +5,7 @@
 - Install Rust
 - Install AWS CLI
 - Install Google Cloud CLI (gcloud)
+- Setup MongoDB
 - Install [libmongocrypt](https://www.mongodb.com/docs/manual/core/csfle/reference/libmongocrypt/)
 - Download `domichain-program-library` and compile `spl-token` CLI
 
