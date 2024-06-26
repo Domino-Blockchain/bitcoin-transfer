@@ -1,37 +1,50 @@
 # Bitcoin transfer
 
+## Install dependencies
+
+- Install Rust
+- Install AWS CLI
+- Install Google Cloud CLI (gcloud)
+- Install [libmongocrypt](https://www.mongodb.com/docs/manual/core/csfle/reference/libmongocrypt/)
+- Download `domichain-program-library` and compile `spl-token` CLI
+
+- Install BDK CLI:
 ```sh
-curl http://0.0.0.0:3000/get_address
-curl -X POST http://0.0.0.0:3000/check_balance | jq
-curl -X POST http://0.0.0.0:3000/mint_token | jq
+# Install the BDK CLI (default case)
+cargo install bdk-cli --features compiler,electrum
+# OR if you need Esplora
+cargo install bdk-cli --features compiler,esplora-ureq 
 ```
 
-
-TODO:
-
-- include spl-token mint as Rust dep
-- Write test for sending BTC
-
-
-- Add DB for user mint requests, track all transfers/mints locally
-- Add an entry point for users to get their bitcoins back
-- Automate multi-sig BTC TX signing
-
-
-- Install libmongocrypt https://www.mongodb.com/docs/manual/core/csfle/reference/libmongocrypt/
+- Compile `bdk-cli` with KMS support:
 ```sh
-# Dump of MongoDB
-mongodump --uri="mongodb://localhost:27017"
+pushd multisig_scripts
 
-# Install the BDK CLI
-cargo install bdk-cli --features compiler,electrum
-# OR
-cargo install bdk-cli --features compiler,esplora-ureq
+git clone git@github.com:Domino-Blockchain/rust-secp256k1.git
+git clone git@github.com:Domino-Blockchain/rust-miniscript.git
+git clone git@github.com:Domino-Blockchain/rust-bitcoin.git
+git clone git@github.com:Domino-Blockchain/bitcoindevkit-bdk-cli.git bdk-cli
+git clone git@github.com:Domino-Blockchain/bitcoindevkit-bdk.git bdk
 
-# Create AWS KMS keys
+pushd bdk-cli
+cargo build --release
+popd
+
+popd
+```
+
+## Setup environment variables
+
+```sh
+cp .env.example .env
+# Update variables in .env file
+```
+
+## Create keys
+
+```sh
 # Edit `aws_kms_policy.json` file with admin user instead `user@company.com`
 python create_aws_keys.py
-
 # Create Google KMS keys
 python create_google_keys.py
 
@@ -41,22 +54,19 @@ python3 get_google_keys.py > google_kms_keys.json
 
 # setup mongodb key
 cargo run --bin generate_master_key
+```
 
-# btc_ui
-cd bitcoin_bridge_repos/unisat-dev-support/brc20-swap-demo
-npm run start
+## Start the server
 
-# setup config
-# DOMI Testnet URL: http://103.106.59.69:8899
-
+```sh
 # btc_server
 cargo run --release --bin bitcoin_transfer >> ~/btc_logs.txt
-cat btc_logs.txt | rg -v pong | rg -v conversions | rg -v loadingIndicators
+```
 
-# db: btc
-# collection: keys
+- [API docs](https://github.com/Domino-Blockchain/bitcoin-transfer/blob/main/docs/API.md)
 
-# Verify owner balance:
+Verify owner balance:
+```sh
 spl-token \
     --url http://108.48.39.243:8899 \
     --program-id BTCi9FUjBVY3BSaqjzfhEPKVExuvarj8Gtfn4rJ5soLC \
@@ -64,8 +74,15 @@ spl-token \
     --owner 5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ
 ```
 
-AWS KMS keys managment:
+## Dump of MongoDB
+
+```sh
+mongodump --uri="mongodb://localhost:27017"
 ```
+
+## AWS KMS keys managment
+
+```sh
 # List all keys
 aws kms list-aliases --query "Aliases[?contains(@.AliasName,'btci_multisig_')]"
 # Key ID to Key ARN mapping
