@@ -16,7 +16,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 mongodb = { version = "2.8.2", features = ["in-use-encryption-unstable"] }
 
 domichain-program = { path = "../domichain/sdk/program" }
-clap = { version = "4.5.1", features = ["cargo"] }
+clap = { version = "4.5.8", features = ["derive", "env"] }
 ron = { git = "https://github.com/ron-rs/ron.git" }
 tower-http = { version = "0.5.2", features = ["cors"] }
 
@@ -38,8 +38,8 @@ shellexpand = "3.1.0"
 sha2 = "0.10.8"
 primitive-types = "0.12.2"
 bitcoin = { path = "multisig_scripts/rust-bitcoin", version = "0.29.2", features = ["serde", "base64", "rand"] }
-tokio-tungstenite = { version = "0.21.0", features = ["native-tls"] }
-cached = { version = "0.51.3", features = ["async"] }
+tokio-tungstenite = { version = "0.23.1", features = ["native-tls"] }
+cached = { version = "0.52.0", features = ["async"] }
 
 # spl-token-cli = { path = "../domichain-program-library/token/cli/src/main.rs" }
 

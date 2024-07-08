@@ -4,7 +4,7 @@ use std::str::FromStr;
 pub fn spl_token(args: &[&str]) -> serde_json::Value {
     // TODO: use spl-token library to create token
     let cli_path = std::env::var("SPL_TOKEN_CLI_PATH").unwrap();
-    let domi_network_url = std::env::var("DOMI_NETWORK_URL").unwrap();
+    let domichain_rpc_url = std::env::var("DOMICHAIN_RPC_URL").unwrap();
     let spl_token_program_id = std::env::var("SPL_TOKEN_PROGRAM_ID").unwrap();
     let mut c = std::process::Command::new(&cli_path);
     let command = c
@@ -13,7 +13,7 @@ pub fn spl_token(args: &[&str]) -> serde_json::Value {
         .arg("--output")
         .arg("json")
         .arg("--url")
-        .arg(&domi_network_url)
+        .arg(&domichain_rpc_url)
         .arg("--program-id")
         .arg(&spl_token_program_id)
         .args(args);

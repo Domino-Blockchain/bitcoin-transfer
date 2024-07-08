@@ -1,5 +1,3 @@
-// mod spl_token_cli_lib;
-
 mod balance_by_addresses;
 mod bdk_cli;
 mod bdk_cli_struct;
@@ -16,19 +14,23 @@ mod spl_token;
 mod watch_addresses;
 mod watch_tx;
 
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::http::{self, Method};
+use axum::http::{self, HeaderValue, Method};
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
+use clap::Parser;
 use kms_sign::load_dotenv;
+use reqwest::Url;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tokio::time::sleep;
-use tower_http::cors::{Any, CorsLayer};
-use tracing::info;
+use tower_http::cors::CorsLayer;
+use tracing::{debug, info};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -43,6 +45,76 @@ use crate::mint_token::mint_token;
 use crate::sign_multisig_tx::sign_multisig_tx;
 use crate::spl_token::spl_token;
 use crate::watch_tx::watch_tx;
+
+#[derive(Clone)]
+struct ArcPathValueParser;
+
+impl clap::builder::TypedValueParser for ArcPathValueParser {
+    type Value = Arc<Path>;
+
+    fn parse_ref(
+        &self,
+        _cmd: &clap::Command,
+        _arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        let path = PathBuf::from(value);
+        Ok(path.into())
+    }
+}
+
+/// BTC Transfer service
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+pub struct Args {
+    /// Domichain RPC URL
+    #[arg(short = 'u', long, env = "DOMICHAIN_RPC_URL")]
+    domichain_rpc_url: Url,
+
+    /// MongoDB URI
+    #[arg(long, env = "MONGODB_URI")]
+    mongodb_uri: String,
+
+    /// Path to masker key file for MongoDB encryption
+    #[arg(long, env = "MONGODB_MASTER_KEY_PATH", value_parser=ArcPathValueParser)]
+    mongodb_master_key_path: Arc<Path>,
+
+    /// Start service bind to the address
+    #[arg(long, env = "SERVICE_BIND_ADDRESS")]
+    service_bind_address: SocketAddr,
+
+    /// Configure HTTP server allow origin header for CORS
+    #[arg(long, env = "SERVICE_ALLOW_ORIGIN")]
+    service_allow_origin: HeaderValue,
+
+    /// Dry run, don't send BTC TX
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+
+    /// Path to spl-token-cli
+    #[arg(long, env = "SPL_TOKEN_CLI_PATH", value_parser=ArcPathValueParser)]
+    spl_token_cli_path: Arc<Path>,
+
+    /// Domichain program ID of SPL token
+    #[arg(long, env = "SPL_TOKEN_PROGRAM_ID", value_parser=ArcPathValueParser)]
+    spl_token_program_id: Arc<Path>,
+
+    /// Path to bdk-cli
+    #[arg(long, env = "BDK_CLI_PATH_DEFAULT", value_parser=ArcPathValueParser)]
+    bdk_cli_path_default: Arc<Path>,
+
+    /// Path to bdk-cli with AWS KMS support
+    #[arg(long, env = "BDK_CLI_PATH_PATCHED", value_parser=ArcPathValueParser)]
+    bdk_cli_path_patched: Arc<Path>,
+
+    /// Bitcoin network
+    #[arg(long, env = "BTC_NETWORK")]
+    btc_network: bdk::bitcoin::Network,
+
+    /// Path to ledger keys JSON file with hardware ledger pubkey
+    #[arg(long, env = "LEDGER_KEYS_PATH", value_parser=ArcPathValueParser)]
+    ledger_keys_path: Arc<Path>,
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -64,16 +136,40 @@ async fn main() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
                 // axum logs rejections from built-in extractors with the `axum::rejection`
                 // target, at `TRACE` level. `axum::rejection=trace` enables showing those events
-                "bitcoin_transfer=debug,tower_http=debug,axum::rejection=trace".into()
+                concat!(
+                    env!("CARGO_PKG_NAME"),
+                    "=debug",
+                    ",tower_http=debug",
+                    ",axum::rejection=trace"
+                )
+                .into()
             }),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // let allow_origin = std::env::var("ALLOW_ORIGIN")
-    //     .unwrap_or_else(|_| "http://devnet.domichain.io:3000".to_string());
+    let Args {
+        domichain_rpc_url,
+        mongodb_uri,
+        mongodb_master_key_path,
+        service_bind_address,
+        service_allow_origin,
+        dry_run,
+        spl_token_cli_path,
+        spl_token_program_id,
+        bdk_cli_path_default,
+        bdk_cli_path_patched,
+        btc_network,
+        ledger_keys_path,
+    } = Args::parse();
 
-    // DB::test().await.unwrap();
+    assert!(spl_token_cli_path.exists());
+    assert!(bdk_cli_path_default.exists());
+    assert!(bdk_cli_path_patched.exists());
+    assert!(ledger_keys_path.exists());
+
+    debug!("starting");
+
     let db = Arc::new(DB::new().await);
     let db_clone = Arc::clone(&db);
 
@@ -117,8 +213,7 @@ async fn main() {
         )
         .layer(
             CorsLayer::new()
-                .allow_origin(Any)
-                // .allow_origin(allow_origin.parse::<HeaderValue>().unwrap())
+                .allow_origin(service_allow_origin)
                 .allow_methods([Method::GET, Method::POST])
                 .allow_headers(vec![http::header::CONTENT_TYPE]),
         )

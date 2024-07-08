@@ -6,6 +6,7 @@ xpriv_*.json
 onesig_psbt.json
 secondsig_psbt.json
 thirdsig_psbt.json
+
 aws_kms_keys.json
 google_kms_keys.json
 ledger_keys.json
