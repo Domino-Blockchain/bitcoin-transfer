@@ -9,7 +9,13 @@
 - Install [libmongocrypt](https://www.mongodb.com/docs/manual/core/csfle/reference/libmongocrypt/)
 - Download `domichain-program-library` and compile `spl-token` CLI
 
-- Install BDK CLI:
+### Install `libsqlite3-dev`
+```sh
+# Fixes: /usr/bin/ld: cannot find -lsqlite3
+sudo apt-get install libsqlite3-dev
+```
+
+### Install BDK CLI:
 ```sh
 # Install the BDK CLI (default case)
 cargo install bdk-cli --features compiler,electrum
@@ -17,7 +23,7 @@ cargo install bdk-cli --features compiler,electrum
 cargo install bdk-cli --features compiler,esplora-ureq 
 ```
 
-- Compile `bdk-cli` with KMS support:
+### Compile `bdk-cli` with KMS support:
 ```sh
 pushd multisig_scripts
 
@@ -84,8 +90,8 @@ mongodump --uri="mongodb://localhost:27017"
 ## AWS KMS keys managment
 
 ```sh
-# List all keys
+# Describe all keys
 aws kms list-aliases --query "Aliases[?contains(@.AliasName,'btci_multisig_')]"
-# Key ID to Key ARN mapping
+# Get Key ID to Key ARN mapping
 aws kms list-keys --query "Keys" | jq "map({ (.KeyId): .KeyArn }) | add"
 ```
