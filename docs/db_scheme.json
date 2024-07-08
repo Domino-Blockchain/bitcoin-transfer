@@ -19,10 +19,10 @@
             // Hardcoded (TODO: replace with Ledger)
             "public_key_02": "string",
 
-            // TODO: Google KMS
-            "public_key_name_03": "string", // TODO
-            "public_key_arn_03": "string", // TODO
-            "public_key_03": "string", // TODO
+            // Google KMS
+            "public_key_name_03": "string",
+            "public_key_arn_03": "string",
+            "public_key_03": "string",
 
             // Address to mint BTCi
             "domi_address": "string"
