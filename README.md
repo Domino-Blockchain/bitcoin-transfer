@@ -63,6 +63,12 @@ python3 get_google_keys.py > google_kms_keys.json
 
 # setup mongodb key
 cargo run --bin generate_master_key
+
+# Create ledger_keys.json
+# The JSON file represents hardware ledger to multisig
+# It should contain extended public keys of ledger
+cat ledger_keys.json
+# {"bitcoin": {"xpub": "..."}, "testnet": {"xpub": "..."}}
 ```
 
 ## Start the server
