@@ -1,6 +1,4 @@
-use std::
-    collections::HashMap
-;
+use std::collections::HashMap;
 
 use bdk::{
     bitcoin::{constants::COINBASE_MATURITY, Address},

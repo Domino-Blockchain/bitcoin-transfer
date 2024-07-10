@@ -9,7 +9,7 @@ use tracing::{debug, info};
 use crate::{
     bdk_cli_struct::BdkCli,
     mempool::{get_mempool_url, get_recommended_fee_rates, RecommendedFeesResp},
-    serde_convert, AppState,
+    serde_convert, AppState, Args,
 };
 
 #[derive(Deserialize)]
@@ -46,15 +46,19 @@ pub async fn estimate_fee(
     State(state): State<AppState>,
     Json(request): Json<EstimateFeeRequest>,
 ) -> Json<EstimateFeeResult> {
-    let btc_network = Network::from_str(&std::env::var("BTC_NETWORK").unwrap()).unwrap();
-    let cli_path = PathBuf::from(std::env::var("BDK_CLI_PATH_DEFAULT").unwrap());
-    let cli_path_patched = PathBuf::from(std::env::var("BDK_CLI_PATH_PATCHED").unwrap());
-    let temp_wallet_dir = PathBuf::from(std::env::var("BDK_TEMP_WALLET_DIR").unwrap());
+    let Args {
+        bdk_cli_path_default,
+        bdk_cli_path_patched,
+        btc_network,
+        ..
+    } = state.config;
+
+    let temp_wallet_dir = None;
     let descriptor = None;
     let cli = BdkCli::new(
         btc_network,
-        cli_path,
-        cli_path_patched,
+        bdk_cli_path_default,
+        bdk_cli_path_patched,
         temp_wallet_dir,
         descriptor,
     )
@@ -102,7 +106,7 @@ pub async fn estimate_fee(
         .get_multi_descriptor(xprv_00, xpub_01, xpub_02, xpub_03)
         .await;
 
-    let recommended_fee_rates = get_recommended_fee_rates(get_mempool_url()).await;
+    let recommended_fee_rates = get_recommended_fee_rates(get_mempool_url(btc_network)).await;
     debug!(
         "get_recommended_fee_rates was_cached: {:?}",
         recommended_fee_rates.was_cached

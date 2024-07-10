@@ -1,5 +1,7 @@
+use std::borrow::Borrow;
 use std::fs::File;
 use std::io::BufReader;
+use std::path::Path;
 
 use base64::prelude::*;
 use bitcoin::hashes::hex::ToHex;
@@ -17,6 +19,8 @@ use primitive_types::U256;
 use serde::Deserialize;
 use tokio::fs::read_to_string;
 use tracing::info;
+
+const DATAKEY_NAME: &str = "encryption_btc";
 
 #[allow(dead_code)]
 pub struct DB {
@@ -48,13 +52,7 @@ impl DB {
         }
     }
 
-    pub async fn new() -> Self {
-        let mongodb_uri = std::env::var("MONGODB_URI").unwrap();
-
-        let raw_key_path = std::env::var("MONGODB_MASTER_KEY_PATH").unwrap();
-        // Expand '~' -> homedir
-        let key_path: &str = &shellexpand::tilde(&raw_key_path);
-
+    pub async fn new(mongodb_uri: &str, mongodb_master_key_path: &Path) -> Self {
         // Parse a connection string into an options struct.
         let mut client_options = ClientOptions::parse(&mongodb_uri).await.unwrap();
 
@@ -76,7 +74,9 @@ impl DB {
         // }
 
         let (client_decryption, client_encryption) =
-            DB::get_clients(&mongodb_uri, key_path).await.unwrap();
+            DB::get_clients(&mongodb_uri, mongodb_master_key_path)
+                .await
+                .unwrap();
         let keys_collection = client_decryption
             .database("btc")
             .collection::<Document>("keys");
@@ -94,19 +94,15 @@ impl DB {
     }
 
     #[allow(dead_code)]
-    pub async fn test() -> Result<()> {
-        let mongodb_uri = std::env::var("MONGODB_URI").unwrap();
-
+    pub async fn test(mongodb_uri: &str, mongodb_master_key_path: &Path) -> Result<()> {
         // This must be the same master key that was used to create
         // the encryption key.
         // let mut key_bytes = vec![0u8; 96];
         // rand::thread_rng().fill(&mut key_bytes[..]);
 
-        let key_path_owned = std::env::var("MONGODB_MASTER_KEY_PATH").unwrap();
-        let key_path: &str = &shellexpand::tilde(&key_path_owned); // Expand '~' -> homedir
-        let key_data = read_to_string(key_path)
+        let key_data = read_to_string(mongodb_master_key_path)
             .await
-            .map_err(|e| (e, key_path))
+            .map_err(|e| (e, mongodb_master_key_path))
             .unwrap();
         let key_bytes = BASE64_STANDARD.decode(key_data).unwrap();
 
@@ -152,7 +148,7 @@ impl DB {
         // Create a new data key for the encryptedField.
         let data_key_id = client_encryption
             .create_data_key(MasterKey::Local)
-            .key_alt_names(["encryption_btc".to_string()])
+            .key_alt_names([DATAKEY_NAME.to_string()])
             .run()
             .await?;
 
@@ -191,35 +187,7 @@ impl DB {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub async fn get_address(&self) -> String {
-        let db = self.client.database("btc");
-        let collection = db.collection::<Document>("keys");
-
-        // collection.drop(None).await.unwrap();
-        // collection
-        //     .insert_one(
-        //         doc! {
-        //             "address": "tb1qwv8vw6ym7dm76dzthnaglxysqsdtqy5940tram"
-        //         },
-        //         None,
-        //     )
-        //     .await
-        //     .unwrap();
-
-        let cursor = collection.find(None, None).await.unwrap();
-
-        cursor
-            .deserialize_current()
-            .unwrap()
-            .get("address")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .to_string()
-    }
-
-    async fn get_clients(mongodb_uri: &str, key_path: &str) -> Result<(Client, ClientEncryption)> {
+    async fn get_clients(mongodb_uri: &str, key_path: &Path) -> Result<(Client, ClientEncryption)> {
         let key_data = read_to_string(key_path)
             .await
             .map_err(|e| (e, key_path))
@@ -253,15 +221,12 @@ impl DB {
         .bypass_auto_encryption(true)
         .build()
         .await?;
-        // let coll = client.database("test").collection::<Document>("coll");
-        // // !!! Clear old data
-        // coll.drop(None).await?;
 
-        // // Set up the key vault (key_vault_namespace) for this example.
-        // let key_vault = client
-        //     .database(&key_vault_namespace.db)
-        //     .collection::<Document>(&key_vault_namespace.coll);
-        // key_vault.drop(None).await?;
+        // Set up the key vault (key_vault_namespace)
+        let key_vault = client
+            .database(&key_vault_namespace.db)
+            .collection::<Document>(&key_vault_namespace.coll);
+        let datakey = key_vault.find_one(None, None).await.unwrap();
 
         let client_encryption = ClientEncryption::new(
             // The MongoClient to use for reading/writing to the key vault.
@@ -270,6 +235,16 @@ impl DB {
             key_vault_namespace.clone(),
             kms_providers.clone(),
         )?;
+
+        if datakey.is_none() {
+            // Create a new data key for the encrypted fields
+            let data_key_id = client_encryption
+                .create_data_key(MasterKey::Local)
+                .key_alt_names([DATAKEY_NAME.to_string()])
+                .run()
+                .await?;
+        }
+
         Ok((client, client_encryption))
     }
 
@@ -288,7 +263,7 @@ impl DB {
         let encrypted_field = client_encryption
             .encrypt(
                 serde_json::to_string(&to_save_encrypted).unwrap(),
-                "encryption_btc".to_string(),
+                DATAKEY_NAME.to_string(),
                 Algorithm::AeadAes256CbcHmacSha512Deterministic,
             )
             .run()
@@ -296,12 +271,6 @@ impl DB {
         to_save.insert("private_key_00", encrypted_field);
 
         keys_collection.insert_one(to_save, None).await?;
-
-        // use futures::TryStreamExt;
-        // let mut cursor = keys_collection.find(None, None).await.unwrap();
-        // while let Some(document) = cursor.try_next().await.unwrap() {
-        //     dbg!(document);
-        // }
 
         Ok(())
     }

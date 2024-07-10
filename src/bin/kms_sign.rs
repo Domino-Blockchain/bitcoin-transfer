@@ -123,7 +123,10 @@ mod tests {
 
         let sig = Signature::from_str("3044022013a101e5b408707fbc82b4068c97de99b1902079dd226a678c9ec01563ee02a20220196e17e05d5a0e983589553061d1c1dc4ee91a8db6f9cebe575233e0e66bcc9c").unwrap();
 
-        let pk = PublicKey::from_str("02002c5c77d7951eaa1818a7b409181b2e4a81e93e6eb44c6fe92c637c492725bb").unwrap();
+        let pk = PublicKey::from_str(
+            "02002c5c77d7951eaa1818a7b409181b2e4a81e93e6eb44c6fe92c637c492725bb",
+        )
+        .unwrap();
 
         let secp = bitcoin::secp256k1::Secp256k1::new();
         secp.verify_ecdsa(msg, &sig, &pk).unwrap();
@@ -190,7 +193,10 @@ mod tests {
 
         let sig = Signature::from_str("304402200c10350cf7f0ff0463cd52b476e0f1e37c9d164ec0630d648973ed89d58b8b8002207980566cd7ba8a59f3d55a13d15e71bf66a83fc1b9cec38875fb7fb02a08d01f").unwrap();
 
-        let pk = PublicKey::from_str("036f0694a43f05fd642f1fe0b3bd023b1322df39080c5624a5ba8bede20fcd9dc2").unwrap();
+        let pk = PublicKey::from_str(
+            "036f0694a43f05fd642f1fe0b3bd023b1322df39080c5624a5ba8bede20fcd9dc2",
+        )
+        .unwrap();
 
         let secp = bitcoin::secp256k1::Secp256k1::new();
         secp.verify_ecdsa(msg, &sig, &pk).unwrap();

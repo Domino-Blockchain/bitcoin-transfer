@@ -10,7 +10,9 @@ use sha2::{Digest, Sha256};
 use tokio::fs::read_to_string;
 use tracing::info;
 
-use crate::{bdk_cli_struct::BdkCli, serde_convert, watch_addresses::watch_address, AppState};
+use crate::{
+    bdk_cli_struct::BdkCli, serde_convert, watch_addresses::watch_address, AppState, Args,
+};
 
 /*
 {
@@ -37,15 +39,19 @@ struct GetPubkeyResult {
 }
 
 pub async fn new_multisig_address(state: &AppState, domi_address: String) -> String {
-    let btc_network = Network::from_str(&std::env::var("BTC_NETWORK").unwrap()).unwrap();
-    let cli_path = PathBuf::from(std::env::var("BDK_CLI_PATH_DEFAULT").unwrap());
-    let cli_path_patched = PathBuf::from(std::env::var("BDK_CLI_PATH_PATCHED").unwrap());
-    let temp_wallet_dir = PathBuf::from(std::env::var("BDK_TEMP_WALLET_DIR").unwrap());
+    let Args {
+        bdk_cli_path_default,
+        bdk_cli_path_patched,
+        btc_network,
+        ..
+    } = &state.config;
+
+    let temp_wallet_dir = None;
     let descriptor = None;
     let cli = BdkCli::new(
-        btc_network,
-        cli_path,
-        cli_path_patched,
+        *btc_network,
+        bdk_cli_path_default.clone(),
+        bdk_cli_path_patched.clone(),
         temp_wallet_dir,
         descriptor,
     )
@@ -87,7 +93,9 @@ pub async fn new_multisig_address(state: &AppState, domi_address: String) -> Str
     //     "036f0694a43f05fd642f1fe0b3bd023b1322df39080c5624a5ba8bede20fcd9dc2",
     // );
 
-    let multi_descriptor_00 = cli.get_multi_descriptor(xprv_00, &xpub_01, &xpub_02, &xpub_03).await;
+    let multi_descriptor_00 = cli
+        .get_multi_descriptor(xprv_00, &xpub_01, &xpub_02, &xpub_03)
+        .await;
     // let descriptor_00 = format!("{xprv_00}/84h/1h/0h/0/*");
     // // let _descriptor_02 = format!("{xprv_02}/84h/1h/0h/0/*");
     // let desc_00 = format!("thresh(2,pk({descriptor_00}),pk({xpub_01}),pk({xpub_02}))");
@@ -111,7 +119,7 @@ pub async fn new_multisig_address(state: &AppState, domi_address: String) -> Str
         "domi_address": domi_address,
     };
 
-    info!("to_save_encrypted: {:#?}", &to_save_encrypted);
+    // info!("to_save_encrypted: {:#?}", &to_save_encrypted);
     info!("to_save: {:#?}", &to_save);
     info!("multi_address: {:#?}", &multi_address);
 
@@ -133,11 +141,16 @@ pub async fn get_address_from_db(
     State(state): State<AppState>,
     Json(request): Json<NewMiltisigAddressRequest>,
 ) -> Json<String> {
+    let Args { btc_network, .. } = state.config;
+
     let address = new_multisig_address(&state, request.domi_address).await;
 
-    let _h = tokio::spawn(watch_address(address.clone(), state.db.clone()));
+    let _h = tokio::spawn(watch_address(
+        address.clone(),
+        state.db.clone(),
+        btc_network,
+    ));
 
-    // Json(state.db.get_address().await)
     Json(address)
 }
 

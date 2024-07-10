@@ -94,8 +94,9 @@ pub async fn watch_addresses(
     mut subscribe: UnboundedReceiver<String>,
     unsubscribe: UnboundedReceiver<String>,
     on_update: UnboundedSender<Update>,
+    btc_network: bdk::bitcoin::Network,
 ) -> (JoinHandle<()>, JoinHandle<()>) {
-    let (ws_stream, _) = connect_async(get_mempool_ws_url())
+    let (ws_stream, _) = connect_async(get_mempool_ws_url(btc_network))
         .await
         .expect("Failed to connect");
 
@@ -171,8 +172,8 @@ pub async fn watch_addresses(
     (read_handle, write_handle)
 }
 
-pub async fn watch_address(address: String, db: Arc<DB>) {
-    let (ws_stream, _) = connect_async(get_mempool_ws_url())
+pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitcoin::Network) {
+    let (ws_stream, _) = connect_async(get_mempool_ws_url(btc_network))
         .await
         .expect("Failed to connect");
 

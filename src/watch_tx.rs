@@ -8,7 +8,10 @@ use serde_json::json;
 use tokio::time::sleep;
 
 use crate::{
-    db::DB, mempool::get_mempool_url, mint_token::{mint_token_inner, MintTokenResult}, AppState
+    db::DB,
+    mempool::get_mempool_url,
+    mint_token::{mint_token_inner, MintTokenResult},
+    AppState, Args,
 };
 
 #[derive(Deserialize)]
@@ -22,12 +25,13 @@ pub async fn watch_tx(
     State(state): State<AppState>,
     Json(request): Json<WatchTxRequest>,
 ) -> Json<serde_json::Value> {
+    let Args { btc_network, .. } = state.config;
     let WatchTxRequest {
         tx_hash,
         btc_deposit_address,
         domi_address,
     } = request;
-    let mempool_url = get_mempool_url();
+    let mempool_url = get_mempool_url(btc_network);
     let url = format!("{mempool_url}/api/tx/{tx_hash}");
     let body = match get_tx_data(&url).await {
         Err(error) => {
@@ -53,7 +57,7 @@ pub async fn watch_tx(
 
     tokio::spawn(async move {
         loop {
-            match poll_is_tx_confirmed(&tx_hash).await {
+            match poll_is_tx_confirmed(btc_network, &tx_hash).await {
                 Ok(true) => {
                     dbg!("TX is confirmed", &tx_hash);
                     process_confirmed(&state, &url, &tx_hash, &btc_deposit_address, &domi_address)
@@ -179,8 +183,11 @@ async fn get_value(body: serde_json::Value, deposit_address: &str) -> anyhow::Re
 }
 
 // https://mempool.space/docs/api/rest#get-transaction-status
-async fn poll_is_tx_confirmed(tx_hash: &str) -> anyhow::Result<bool> {
-    let mempool_url = get_mempool_url();
+async fn poll_is_tx_confirmed(
+    btc_network: bdk::bitcoin::Network,
+    tx_hash: &str,
+) -> anyhow::Result<bool> {
+    let mempool_url = get_mempool_url(btc_network);
     let body: serde_json::Value = reqwest::get(format!("{mempool_url}/api/tx/{tx_hash}/status"))
         .await?
         .json()

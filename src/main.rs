@@ -24,6 +24,7 @@ use axum::routing::post;
 use axum::Json;
 use axum::Router;
 use clap::Parser;
+use domichain_program::pubkey::Pubkey;
 use kms_sign::load_dotenv;
 use reqwest::Url;
 use serde::de::DeserializeOwned;
@@ -64,7 +65,7 @@ impl clap::builder::TypedValueParser for ArcPathValueParser {
 }
 
 /// BTC Transfer service
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
 pub struct Args {
     /// Domichain RPC URL
@@ -75,7 +76,7 @@ pub struct Args {
     #[arg(long, env = "MONGODB_URI")]
     mongodb_uri: String,
 
-    /// Path to masker key file for MongoDB encryption
+    /// Path to master key file for MongoDB encryption
     #[arg(long, env = "MONGODB_MASTER_KEY_PATH", value_parser=ArcPathValueParser)]
     mongodb_master_key_path: Arc<Path>,
 
@@ -96,8 +97,8 @@ pub struct Args {
     spl_token_cli_path: Arc<Path>,
 
     /// Domichain program ID of SPL token
-    #[arg(long, env = "SPL_TOKEN_PROGRAM_ID", value_parser=ArcPathValueParser)]
-    spl_token_program_id: Arc<Path>,
+    #[arg(long, env = "SPL_TOKEN_PROGRAM_ID")]
+    spl_token_program_id: Pubkey,
 
     /// Path to bdk-cli
     #[arg(long, env = "BDK_CLI_PATH_DEFAULT", value_parser=ArcPathValueParser)]
@@ -114,16 +115,29 @@ pub struct Args {
     /// Path to ledger keys JSON file with hardware ledger pubkey
     #[arg(long, env = "LEDGER_KEYS_PATH", value_parser=ArcPathValueParser)]
     ledger_keys_path: Arc<Path>,
+
+    /// AWS Access key ID
+    #[arg(long, env = "AWS_ACCESS_KEY_ID")]
+    aws_access_key_id: String, // TODO: Arc<str> or remove from AppState
+
+    /// AWS Secret access key
+    #[arg(long, env = "AWS_SECRET_ACCESS_KEY")]
+    aws_secret_access_key: String,
+
+    /// AWS Region
+    #[arg(long, env = "AWS_REGION")]
+    aws_region: String,
 }
 
 #[derive(Clone)]
 struct AppState {
     db: Arc<DB>,
+    config: Args,
 }
 
 impl AppState {
-    fn new(db: Arc<DB>) -> Self {
-        Self { db }
+    fn new(db: Arc<DB>, config: Args) -> Self {
+        Self { db, config }
     }
 }
 
@@ -148,6 +162,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    let args = Args::parse();
     let Args {
         domichain_rpc_url,
         mongodb_uri,
@@ -161,8 +176,14 @@ async fn main() {
         bdk_cli_path_patched,
         btc_network,
         ledger_keys_path,
-    } = Args::parse();
+        aws_access_key_id,
+        aws_secret_access_key,
+        aws_region,
+    } = &args;
 
+    let service_allow_origin = service_allow_origin.clone();
+
+    assert!(mongodb_master_key_path.exists());
     assert!(spl_token_cli_path.exists());
     assert!(bdk_cli_path_default.exists());
     assert!(bdk_cli_path_patched.exists());
@@ -170,18 +191,17 @@ async fn main() {
 
     debug!("starting");
 
-    let db = Arc::new(DB::new().await);
+    let db = Arc::new(DB::new(mongodb_uri, mongodb_master_key_path).await);
+
+    let all_multisig_addresses = db.get_all_multisig_addresses().await;
+    info!("all_multisig_addresses = {:#?}", &all_multisig_addresses);
+    info!(
+        "all_multisig_addresses.len() = {:#?}",
+        all_multisig_addresses.len()
+    );
+
     let db_clone = Arc::clone(&db);
-
     let ws_handle = tokio::spawn(async move {
-        let all_multisig_addresses = db_clone.get_all_multisig_addresses().await;
-        info!("&all_multisig_addresses = {:#?}", &all_multisig_addresses);
-        info!(
-            "all_multisig_addresses.len() = {:#?}",
-            all_multisig_addresses.len()
-        );
-        // vec!["tb1qalaejg4ve63htr8pxfr9l76cq8qqq52pgrevwy2vdqywsxlxegesh0mh6n"]
-
         for (_i, chunk) in all_multisig_addresses.chunks(10).enumerate() {
             let _chunk: Vec<_> = chunk.into_iter().cloned().collect();
             tokio::spawn(async move {
@@ -191,33 +211,35 @@ async fn main() {
         }
     });
 
+    let app_state = AppState::new(db.into(), args);
+
     let app = Router::new()
         .route("/get_address_from_db", post(get_address_from_db))
         .route("/estimate_fee", post(estimate_fee))
         .route("/sign_multisig_tx", post(sign_multisig_tx))
-        // Unused
-        .route("/watch_tx", post(watch_tx))
-        .route("/get_mint_info", post(get_mint_info))
-        // Deprecated
-        .route(
-            "/get_address",
-            post(|| async { Json(get_new_service_address().await.to_string()) }),
-        )
-        .route("/check_balance", post(check_balance))
-        .route("/mint_token", post(mint_token))
-        .route("/burn_token", post(burn_token))
-        .route("/send_btc_to_user", post(send_btc_to_user))
-        .route(
-            "/check_destination_balance",
-            post(check_destination_balance),
-        )
+        // // Unused
+        // .route("/watch_tx", post(watch_tx))
+        // .route("/get_mint_info", post(get_mint_info))
+        // // Deprecated
+        // .route(
+        //     "/get_address",
+        //     post(|| async { Json(get_new_service_address().await.to_string()) }),
+        // )
+        // .route("/check_balance", post(check_balance))
+        // .route("/mint_token", post(mint_token))
+        // .route("/burn_token", post(burn_token))
+        // .route("/send_btc_to_user", post(send_btc_to_user))
+        // .route(
+        //     "/check_destination_balance",
+        //     post(check_destination_balance),
+        // )
         .layer(
             CorsLayer::new()
                 .allow_origin(service_allow_origin)
                 .allow_methods([Method::GET, Method::POST])
                 .allow_headers(vec![http::header::CONTENT_TYPE]),
         )
-        .with_state(AppState::new(db.into()));
+        .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
     info!("listening on http://{}", listener.local_addr().unwrap());

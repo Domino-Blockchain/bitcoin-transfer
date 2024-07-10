@@ -1,9 +1,15 @@
-use std::{borrow::Cow, path::PathBuf, time::Instant};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 
 use bdk::{bitcoin::Network, FeeRate};
 use futures::Future;
 use serde::{Deserialize, Serialize};
 use serde_json::from_value;
+use tokio::fs::remove_dir_all;
 use tracing::info;
 
 use crate::{
@@ -14,9 +20,9 @@ use crate::{
 #[derive(Debug)]
 pub struct BdkCli {
     pub network: Network,
-    pub cli_path: PathBuf,
-    pub cli_path_patched: PathBuf,
-    pub temp_wallet_dir: PathBuf,
+    pub cli_path: Arc<Path>,
+    pub cli_path_patched: Arc<Path>,
+    pub temp_wallet_dir: Option<Arc<Path>>,
     pub descriptor: Option<String>,
 }
 
@@ -24,16 +30,18 @@ pub struct BdkCli {
 impl BdkCli {
     pub async fn new(
         network: Network,
-        cli_path: PathBuf,
-        cli_path_patched: PathBuf,
-        temp_wallet_dir: PathBuf,
+        cli_path: Arc<Path>,
+        cli_path_patched: Arc<Path>,
+        temp_wallet_dir: Option<Arc<Path>>,
         descriptor: Option<String>,
     ) -> Self {
         assert!(tokio::fs::try_exists(&cli_path).await.unwrap());
         assert!(tokio::fs::try_exists(&cli_path_patched).await.unwrap());
 
-        // Not exists
-        // assert!(!tokio::fs::try_exists(&temp_wallet_dir).await.unwrap());
+        if let Some(temp_wallet_dir) = &temp_wallet_dir {
+            // Not exists
+            assert!(!tokio::fs::try_exists(temp_wallet_dir).await.unwrap());
+        }
 
         Self {
             network,
@@ -47,7 +55,7 @@ impl BdkCli {
     pub async fn generate_key(&self) -> CliGenerateKeyResult {
         let result = exec_with_json_output(
             &["--network", &self.network.to_string(), "key", "generate"],
-            &self.cli_path,
+            self.cli_path.as_ref(),
         )
         .await;
         let GenerateKeyInnerResult {
@@ -79,7 +87,7 @@ impl BdkCli {
                 "--path",
                 "m/84'/1'/0'/0",
             ],
-            &self.cli_path,
+            self.cli_path.as_ref(),
         )
         .await;
         let result: GetPubkeyInnerResult = from_value(result).unwrap();
@@ -101,7 +109,7 @@ impl BdkCli {
             format!("thresh(3,pk({descriptor_00}),pk({xpub_01}),pk({xpub_02}),pk({xpub_03}))");
         let multi_descriptor_00_ = exec_with_json_output(
             &["--network", &self.network.to_string(), "compile", &desc_00],
-            &self.cli_path,
+            self.cli_path.as_ref(),
         )
         .await;
         let multi_descriptor_00 = multi_descriptor_00_["descriptor"]
@@ -122,7 +130,7 @@ impl BdkCli {
         let desc_01 = format!("thresh(3,pk({xpub_00}),pk({xpub_01}),pk({xpub_02}),pk({xpub_03}))");
         let multi_descriptor_01_ = exec_with_json_output(
             &["--network", &self.network.to_string(), "compile", &desc_01],
-            &self.cli_path,
+            self.cli_path.as_ref(),
         )
         .await;
         let multi_descriptor_01 = multi_descriptor_01_["descriptor"]
@@ -139,7 +147,7 @@ impl BdkCli {
                 exec_with_json_output(
                     self.wallet_args(multi_descriptor_00, &["get_new_address"])
                         .iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await
                 // bdk_cli_wallet_inner(multi_descriptor_00, &["get_new_address"], &self.cli_path)
@@ -228,7 +236,7 @@ impl BdkCli {
                 let sync_output = exec_with_json_output(
                     self.wallet_args_online(&multi_descriptor_00, &["sync"])
                         .iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await;
                 info!("sync output: {:?}", sync_output);
@@ -238,7 +246,7 @@ impl BdkCli {
                 let get_balance_result = exec_with_json_output(
                     self.wallet_args(&multi_descriptor_00, &["get_balance"])
                         .iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await;
                 info!("get_balance_result: {get_balance_result:?}");
@@ -259,7 +267,7 @@ impl BdkCli {
                 // export CHANGE_ID=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 policies | jq -r ".external.id")
                 let change_id_ = exec_with_json_output(
                     self.wallet_args(&multi_descriptor_00, &["policies"]).iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await;
                 let change_id = change_id_["external"]["id"].as_str().unwrap();
@@ -280,7 +288,7 @@ impl BdkCli {
                         ],
                     )
                     .iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await;
                 // Could fail with error message
@@ -343,7 +351,7 @@ impl BdkCli {
                 let sync_output = exec_with_json_output(
                     self.wallet_args_online(&multi_descriptor_00, &["sync"])
                         .iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await;
                 info!("sync output: {:?}", sync_output);
@@ -353,7 +361,7 @@ impl BdkCli {
                 let get_balance_result = exec_with_json_output(
                     self.wallet_args(&multi_descriptor_00, &["get_balance"])
                         .iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await;
                 info!("get_balance_result: {get_balance_result:?}");
@@ -374,7 +382,7 @@ impl BdkCli {
                 // export CHANGE_ID=$(bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 policies | jq -r ".external.id")
                 let change_id_ = exec_with_json_output(
                     self.wallet_args(&multi_descriptor_00, &["policies"]).iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await;
                 let change_id = change_id_["external"]["id"].as_str().unwrap();
@@ -395,7 +403,7 @@ impl BdkCli {
                         ],
                     )
                     .iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await;
                 // Could fail with error message
@@ -449,7 +457,7 @@ impl BdkCli {
                         ],
                     )
                     .iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await;
 
@@ -467,7 +475,7 @@ impl BdkCli {
                 let onesig_psbt_ = exec_with_json_output(
                     self.wallet_args(&multi_descriptor_00, &["sign", "--psbt", unsigned_psbt])
                         .iter(),
-                    &self.cli_path,
+                    self.cli_path.as_ref(),
                 )
                 .await;
                 let onesig_psbt = onesig_psbt_["psbt"].as_str().unwrap().to_string();
@@ -506,7 +514,7 @@ impl BdkCli {
                         &["--aws_kms", key_arn, "sign", "--psbt", onesig_psbt],
                     )
                     .iter(),
-                    &self.cli_path_patched,
+                    self.cli_path_patched.as_ref(),
                 )
                 .await;
                 let secondsig_psbt = secondsig_psbt_["psbt"].as_str().unwrap();
@@ -560,7 +568,7 @@ impl BdkCli {
                         &["--google_kms", &key_name, "sign", "--psbt", secondsig_psbt],
                     )
                     .iter(),
-                    &self.cli_path_patched,
+                    self.cli_path_patched.as_ref(),
                 )
                 .await;
                 let thirdsig_psbt = thirdsig_psbt_["psbt"].as_str().unwrap();
@@ -601,7 +609,7 @@ impl BdkCli {
                     &["broadcast", "--psbt", thirdsig_psbt],
                 )
                 .iter(),
-                &self.cli_path,
+                self.cli_path.as_ref(),
             )
             .await;
             info!("broadcast output: {tx_id_:?}");
@@ -615,7 +623,9 @@ impl BdkCli {
 
     async fn remove_temp_wallet_dir(&self) {
         // FIXME: enable deletion?
-        // let _ = remove_dir_all(&self.temp_wallet_dir).await;
+        if let Some(temp_wallet_dir) = &self.temp_wallet_dir {
+            let _ = remove_dir_all(temp_wallet_dir).await;
+        }
     }
 
     pub async fn with_temp_wallet_dir<T, F: Future<Output = T>>(&self, f: impl FnOnce() -> F) -> T {

@@ -14,7 +14,7 @@ use crate::{
     bdk_cli_struct::BdkCli,
     estimate_fee::get_vbytes,
     mempool::{get_mempool_url, get_recommended_fee_rate},
-    serde_convert, AppState,
+    serde_convert, AppState, Args,
 };
 
 #[derive(Deserialize)]
@@ -30,15 +30,19 @@ pub async fn sign_multisig_tx(
     State(state): State<AppState>,
     Json(request): Json<SignMultisigTxRequest>,
 ) -> Json<serde_json::Value> {
-    let btc_network = Network::from_str(&std::env::var("BTC_NETWORK").unwrap()).unwrap();
-    let cli_path = PathBuf::from(std::env::var("BDK_CLI_PATH_DEFAULT").unwrap());
-    let cli_path_patched = PathBuf::from(std::env::var("BDK_CLI_PATH_PATCHED").unwrap());
-    let temp_wallet_dir = PathBuf::from(std::env::var("BDK_TEMP_WALLET_DIR").unwrap());
+    let Args {
+        bdk_cli_path_default,
+        bdk_cli_path_patched,
+        btc_network,
+        ..
+    } = state.config;
+
+    let temp_wallet_dir = None;
     let descriptor = None;
     let cli = BdkCli::new(
         btc_network,
-        cli_path,
-        cli_path_patched,
+        bdk_cli_path_default,
+        bdk_cli_path_patched,
         temp_wallet_dir,
         descriptor,
     )
@@ -97,7 +101,7 @@ pub async fn sign_multisig_tx(
     let fee_rate = if let Some(sat_per_vb) = fee_rate {
         FeeRate::from_sat_per_vb(sat_per_vb)
     } else {
-        get_recommended_fee_rate().await
+        get_recommended_fee_rate(btc_network).await
     };
 
     let (onesig_psbt, fee) = cli
@@ -148,7 +152,7 @@ pub async fn sign_multisig_tx(
         .await;
     // let tx_id = send(&multi_descriptor_01, &secondsig_psbt).await;
 
-    let mempool_url = get_mempool_url();
+    let mempool_url = get_mempool_url(btc_network);
 
     let tx_link = format!("{mempool_url}/tx/{tx_id}");
     info!("transaction sent: {tx_link}");
