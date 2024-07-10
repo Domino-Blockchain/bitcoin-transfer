@@ -13,7 +13,7 @@ struct Data {
 }
 
 fn main() {
-    let data = include_str!("../../test.ron");
+    let data = include_str!("test.ron");
     let d: ron::value::Value = match ron::from_str(data) {
         Ok(d) => d,
         Err(err) => {
