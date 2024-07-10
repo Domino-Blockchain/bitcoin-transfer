@@ -3,11 +3,13 @@
 ## Install dependencies
 
 - Install Rust
-- Install AWS CLI
-- Install Google Cloud CLI (gcloud)
+- Install [AWS CLI](/docs/AWS%20CLI%20setup.md)
+- Install [Google Cloud CLI](/docs/Google%20CLI%20setup.md) (gcloud)
 - Setup MongoDB
-- Install [libmongocrypt](https://www.mongodb.com/docs/manual/core/csfle/reference/libmongocrypt/)
+- Install [libmongocrypt](/docs/libmongocrypt%20setup.md)
 - Download `domichain-program-library` and compile `spl-token` CLI
+- Download `domichain` and place into `../domichain` path
+- Get some DOMI in the wallet. (`domichain account` to get address)
 
 ### Install `libsqlite3-dev`
 ```sh
@@ -51,12 +53,12 @@ cp .env.example .env
 
 ```sh
 # Edit `aws_kms_policy.json` file with admin user instead `user@company.com`
-python create_aws_keys.py
+python3 create_aws_keys.py
 # Create Google KMS keys
-python create_google_keys.py
+python3 create_google_keys.py
 
 # Get info about BTC KMS keys
-python get_aws_keys.py > aws_kms_keys.json
+python3 get_aws_keys.py > aws_kms_keys.json
 python3 get_google_keys.py > google_kms_keys.json
 
 # setup mongodb key
@@ -66,20 +68,43 @@ cargo run --bin generate_master_key
 ## Start the server
 
 ```sh
-# btc_server
-cargo run --release --bin bitcoin_transfer >> ~/btc_logs.txt
+cargo run --release --bin bitcoin_transfer >> ~/btc_logs.txt 2>&1
 ```
 
 - [API docs](https://github.com/Domino-Blockchain/bitcoin-transfer/blob/main/docs/API.md)
+```sh
+~/domichain/target/release/domichain address
+# AHVhj6a5XVKKB3Es6gyWFd4ZqAS5V4LZZzoGqs182f9c
+
+~/domichain/target/release/domichain \
+    -u https://api.testnet.domichain.io \
+    balance
+# N DOMI
+
+~/domichain-program-library/target/release/spl-token \
+    -u https://api.testnet.domichain.io \
+    --output json \
+    accounts
+# {"accounts": []}
+
+# Get new multisig address
+curl -vv -s -H 'Content-Type: application/json' \
+    -d '{ "domi_address":"AHVhj6a5XVKKB3Es6gyWFd4ZqAS5V4LZZzoGqs182f9c"}' \
+    https://btc-transfer.domichain.io/get_address_from_db
+```
 
 Verify owner balance:
 ```sh
-spl-token \
-    --url http://108.48.39.243:8899 \
+~/domichain-program-library/target/release/spl-token \
+    --url https://api.testnet.domichain.io \
     --program-id BTCi9FUjBVY3BSaqjzfhEPKVExuvarj8Gtfn4rJ5soLC \
     accounts \
     --owner 5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ
 ```
+
+## Backup items
+
+See [this doc](/docs/Backup%20items.md)
 
 ## Dump of MongoDB
 
