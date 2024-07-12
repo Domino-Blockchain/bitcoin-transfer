@@ -42,6 +42,15 @@ popd
 popd
 ```
 
+## Get Google Cloud Service Account key
+
+https://cloud.google.com/iam/docs/keys-create-delete
+
+```sh
+mkdir ~/google_cloud_keys
+mv service_key.json ~/google_cloud_keys/service_key.json
+```
+
 ## Setup environment variables
 
 ```sh
