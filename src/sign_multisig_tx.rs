@@ -1,7 +1,8 @@
-use std::{path::PathBuf, str::FromStr};
+use std::str::FromStr;
 
 use axum::{extract::State, Json};
-use bdk::{bitcoin::Network, FeeRate};
+use bdk::FeeRate;
+use domichain_program::pubkey::Pubkey;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::fs::remove_dir_all;
@@ -14,7 +15,10 @@ use crate::{
     bdk_cli_struct::BdkCli,
     estimate_fee::get_vbytes,
     mempool::{get_mempool_url, get_recommended_fee_rate},
-    serde_convert, AppState, Args,
+    mint_token::get_account_address,
+    serde_convert,
+    spl_token::spl_token,
+    AppState, Args,
 };
 
 #[derive(Deserialize)]
@@ -142,10 +146,10 @@ pub async fn sign_multisig_tx(
         .await;
     info!("thirdsig_psbt: {:#?}", &thirdsig_psbt);
 
-    // let account_address = get_account_address(Pubkey::from_str(&mint_address).unwrap());
-    // info!("Burn system account_address: {account_address:?}");
-    // let burn_output = spl_token(&["burn", &account_address.to_string(), &withdraw_amount]);
-    // info!("burn_output: {:#?}", &burn_output);
+    let account_address = get_account_address(Pubkey::from_str(&mint_address).unwrap());
+    info!("Burn system account_address: {account_address:?}");
+    let burn_output = spl_token(&["burn", &account_address.to_string(), &withdraw_amount]);
+    info!("burn_output: {:#?}", &burn_output);
 
     let tx_id = cli
         .send(xpub_00, xpub_01, xpub_02, xpub_03, &thirdsig_psbt)
