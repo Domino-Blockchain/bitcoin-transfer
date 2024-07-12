@@ -144,7 +144,7 @@ pub async fn estimate_fee(
 
 pub fn get_vbytes(fee: u64, fee_rate: FeeRate) -> u64 {
     let vbytes = fee as f32 / fee_rate.as_sat_per_vb();
-    assert!(vbytes.fract().abs() <= f32::EPSILON);
+    assert!(vbytes.fract().abs() <= 1e-6); // Check that vbytes is almost integer
     let vbytes = vbytes.round() as u64;
     vbytes
 }
