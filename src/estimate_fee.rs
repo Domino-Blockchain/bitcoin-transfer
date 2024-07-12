@@ -143,13 +143,22 @@ pub async fn estimate_fee(
 }
 
 pub fn get_vbytes(fee: u64, fee_rate: FeeRate) -> u64 {
-    let vbytes = fee as f32 / fee_rate.as_sat_per_vb();
-    let vbytes = float_to_integer(vbytes);
-    vbytes
+    let fee_rate = fee_rate.as_sat_per_vb();
+    let vbytes = fee as f32 / fee_rate;
+    match float_to_integer(vbytes) {
+        Ok(vbytes) => vbytes,
+        Err((v, i)) => {
+            panic!("Not an integer: {v} != {i}. fee: {fee}, fee_rate: {fee_rate}");
+        }
+    }
 }
 
-fn float_to_integer(v: f32) -> u64 {
+fn float_to_integer(v: f32) -> Result<u64, (f32, u64)> {
     let i = v.round() as u64;
-    assert!((v - i as f32).abs() <= 1e-6, "v: {v}, i: {i}"); // Check that v is almost integer
-    i
+    let valid = (v - i as f32).abs() <= 1e-6; // Check that v is almost integer
+    if valid {
+        Ok(i)
+    } else {
+        Err((v, i))
+    }
 }
