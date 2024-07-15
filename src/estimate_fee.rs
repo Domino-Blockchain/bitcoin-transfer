@@ -1,7 +1,5 @@
-use std::{path::PathBuf, str::FromStr};
-
 use axum::{extract::State, Json};
-use bdk::{bitcoin::Network, FeeRate};
+use bdk::FeeRate;
 use serde::{Deserialize, Serialize};
 use serde_json::Number;
 use tracing::{debug, info};
@@ -29,23 +27,23 @@ pub struct RecommendedFeeRates {
 }
 
 #[derive(Serialize)]
-pub struct EstimateFeeResponse {
-    status: String,
-    vbytes: u64,
-    recommended_fee_rates: RecommendedFeeRates,
-}
-
-#[derive(Serialize)]
 #[serde(untagged)]
-pub enum EstimateFeeResult {
-    Ok(EstimateFeeResponse),
-    Error { status: String, message: String },
+pub enum EstimateFeeResponse {
+    Ok {
+        status: String,
+        vbytes: u64,
+        recommended_fee_rates: RecommendedFeeRates,
+    },
+    Error {
+        status: String,
+        message: String,
+    },
 }
 
 pub async fn estimate_fee(
     State(state): State<AppState>,
     Json(request): Json<EstimateFeeRequest>,
-) -> Json<EstimateFeeResult> {
+) -> Json<EstimateFeeResponse> {
     let Args {
         bdk_cli_path_default,
         bdk_cli_path_patched,
@@ -75,7 +73,7 @@ pub async fn estimate_fee(
             data
         } else {
             // Document not found
-            return Json(EstimateFeeResult::Error {
+            return Json(EstimateFeeResponse::Error {
                 status: "error".to_string(),
                 message: format!("Mint address not found: {mint_address}"),
             });
@@ -115,9 +113,18 @@ pub async fn estimate_fee(
     let recommended_fee = &recommended_fee_rates.fastest_fee;
     let fee_rate = FeeRate::from_sat_per_vb(recommended_fee.as_f64().unwrap() as f32);
 
-    let (fee, vbytes) = cli
+    let (fee, vbytes) = match cli
         .estimate_fee(&multi_descriptor_00, to_address, amount, fee_rate)
-        .await;
+        .await
+    {
+        Ok((fee, vbytes)) => (fee, vbytes),
+        Err(error) => {
+            return Json(EstimateFeeResponse::Error {
+                status: "error".to_string(),
+                message: format!("Estimate fee error: {error}"),
+            });
+        }
+    };
     info!("fee: {fee}");
     info!("fee_rate: {fee_rate:?}");
     info!("vbytes: {vbytes}");
@@ -129,7 +136,7 @@ pub async fn estimate_fee(
         economy_fee,
         minimum_fee,
     } = recommended_fee_rates;
-    return Json(EstimateFeeResult::Ok(EstimateFeeResponse {
+    return Json(EstimateFeeResponse::Ok {
         status: "ok".to_string(),
         vbytes,
         recommended_fee_rates: RecommendedFeeRates {
@@ -139,7 +146,7 @@ pub async fn estimate_fee(
             economy_fee,
             minimum_fee,
         },
-    }));
+    });
 }
 
 pub fn get_vbytes(fee: u64, fee_rate: FeeRate) -> u64 {

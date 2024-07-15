@@ -228,7 +228,7 @@ impl BdkCli {
         to_address: &str,
         amount: &str,
         fee_rate: FeeRate,
-    ) -> (u64, u64) {
+    ) -> Result<(u64, u64), &'static str> {
         let estimate_fee_result = self
             .with_temp_wallet_dir(|| async {
                 // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sync
@@ -327,7 +327,7 @@ impl BdkCli {
             })
             .await;
 
-        estimate_fee_result.unwrap()
+        estimate_fee_result
     }
 
     pub async fn onesig(
