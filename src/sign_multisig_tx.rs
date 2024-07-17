@@ -2,17 +2,21 @@ use std::str::FromStr;
 
 use axum::{extract::State, Json};
 use bdk::FeeRate;
+use domichain_account_decoder::parse_token::token_amount_to_ui_amount;
 use domichain_program::pubkey::Pubkey;
+use domichain_sdk::signature::Signature;
+use reqwest::Url;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::fs::remove_dir_all;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{
     bdk_cli::{
         bdk_cli, bdk_cli_wallet, bdk_cli_wallet_patched, bdk_cli_wallet_temp, WALLET_DIR_PERMIT,
     },
     bdk_cli_struct::BdkCli,
+    domichain::{from_str, get_block_height, get_transaction_poll, DomiTransactionInstructionInfo},
     estimate_fee::get_vbytes,
     mempool::{get_mempool_url, get_recommended_fee_rate},
     mint_token::get_account_address,
@@ -23,11 +27,19 @@ use crate::{
 
 #[derive(Deserialize)]
 pub struct SignMultisigTxRequest {
-    mint_address: String,
+    #[serde(deserialize_with = "from_str")]
+    mint_address: Pubkey,
     withdraw_address: String, // BTC
     withdraw_amount: String,
-    fee_rate: Option<f32>,
+    fee_rate: Option<serde_json::Number>,
     vbytes: Option<u64>,
+    #[serde(deserialize_with = "from_str")]
+    domi_address: Pubkey,
+    block_height: u64,
+    #[serde(deserialize_with = "from_str")]
+    btci_tx_signature: Signature,
+    #[serde(deserialize_with = "from_str")]
+    signature: Signature,
 }
 
 pub async fn sign_multisig_tx(
@@ -35,6 +47,8 @@ pub async fn sign_multisig_tx(
     Json(request): Json<SignMultisigTxRequest>,
 ) -> Json<serde_json::Value> {
     let Args {
+        domichain_rpc_url,
+        spl_token_program_id,
         bdk_cli_path_default,
         bdk_cli_path_patched,
         btc_network,
@@ -52,24 +66,71 @@ pub async fn sign_multisig_tx(
     )
     .await;
 
+    if let Err(verify_error) =
+        verify_request_signature(&domichain_rpc_url, spl_token_program_id, &request).await
+    {
+        return Json(json!({
+            "status": "error",
+            "message": format!("verification is failed: {verify_error}"),
+        }));
+    }
+
     let SignMultisigTxRequest {
         mint_address,
         withdraw_address,
         withdraw_amount,
         fee_rate,
         vbytes,
+        domi_address: _,
+        block_height,
+        btci_tx_signature: _,
+        signature: _,
     } = request;
 
-    let (transaction, key) =
-        if let Some(data) = state.db.find_by_mint_address(&mint_address).await.unwrap() {
-            data
-        } else {
-            // Document not found
+    // Validate withdraw_address
+    match bdk::bitcoin::Address::from_str(&withdraw_address) {
+        Err(error) => {
+            // withdraw_address is invalid
             return Json(json!({
                 "status": "error",
-                "message": format!("Mint address not found: {mint_address}"),
+                "message": format!("withdraw_address is invalid: {error}"),
             }));
-        };
+        }
+        Ok(address) => {
+            if !address.is_valid_for_network(btc_network) {
+                // withdraw_address is invalid for currnet network
+                return Json(json!({
+                    "status": "error",
+                    "message": format!("withdraw_address is invalid for '{btc_network}' network"),
+                }));
+            }
+        }
+    }
+
+    let actual_block_height = get_block_height(domichain_rpc_url).await;
+    let block_height_diff = actual_block_height.checked_sub(block_height);
+    if !matches!(block_height_diff, Some(0..=20)) {
+        // block_height is invalid
+        return Json(json!({
+            "status": "error",
+            "message": format!("block_height is invalid"),
+        }));
+    }
+
+    let (transaction, key) = if let Some(data) = state
+        .db
+        .find_by_mint_address(&mint_address.to_string())
+        .await
+        .unwrap()
+    {
+        data
+    } else {
+        // Document not found
+        return Json(json!({
+            "status": "error",
+            "message": format!("Mint address not found: {mint_address}"),
+        }));
+    };
 
     info!("transaction: {:#?}", &transaction);
     info!("key: {:#?}", &key);
@@ -103,7 +164,7 @@ pub async fn sign_multisig_tx(
     // let amount = "400";
 
     let fee_rate = if let Some(sat_per_vb) = fee_rate {
-        FeeRate::from_sat_per_vb(sat_per_vb)
+        FeeRate::from_sat_per_vb(sat_per_vb.as_f64().unwrap() as f32)
     } else {
         get_recommended_fee_rate(btc_network).await
     };
@@ -118,6 +179,10 @@ pub async fn sign_multisig_tx(
 
     if let Some(expected_vbytes) = vbytes {
         let actual_vbytes = get_vbytes(fee, fee_rate);
+        debug!(
+            "fee: {fee}, fee_rate: {fee_rate}, actual_vbytes: {actual_vbytes}, expected_vbytes: {expected_vbytes}",
+            fee_rate=fee_rate.as_sat_per_vb(),
+        );
 
         if actual_vbytes != expected_vbytes {
             return Json(json!({
@@ -146,9 +211,13 @@ pub async fn sign_multisig_tx(
         .await;
     info!("thirdsig_psbt: {:#?}", &thirdsig_psbt);
 
-    let account_address = get_account_address(Pubkey::from_str(&mint_address).unwrap());
+    let account_address = get_account_address(mint_address);
     info!("Burn system account_address: {account_address:?}");
-    let burn_output = spl_token(&["burn", &account_address.to_string(), &withdraw_amount]);
+    let amount_tokens: u64 = withdraw_amount.parse().unwrap();
+    let ui_amount = token_amount_to_ui_amount(amount_tokens, 8);
+    let burn_amount = ui_amount.ui_amount_string;
+    info!("Burn amount: {burn_amount}");
+    let burn_output = spl_token(&["burn", &account_address.to_string(), &burn_amount]);
     info!("burn_output: {:#?}", &burn_output);
 
     let tx_id = cli
@@ -166,6 +235,133 @@ pub async fn sign_multisig_tx(
         "tx_id": tx_id,
         "tx_link": tx_link,
     }))
+}
+
+async fn verify_request_signature(
+    domichain_rpc_url: &Url,
+    spl_token_program_id: Pubkey,
+    request: &SignMultisigTxRequest,
+) -> Result<(), String> {
+    let SignMultisigTxRequest {
+        mint_address,
+        withdraw_address,
+        withdraw_amount,
+        fee_rate,
+        vbytes,
+        domi_address,
+        block_height,
+        btci_tx_signature,
+        signature,
+    } = request;
+
+    let btci_tx = get_transaction_poll(domichain_rpc_url.clone(), *btci_tx_signature).await;
+
+    // Verify is success transaction
+    assert!(btci_tx.meta.err.is_null());
+    assert!(btci_tx.meta.status == json!({"Ok": null}));
+
+    // TODO: check slot is recent
+
+    // Verify only one signer
+    assert_eq!(btci_tx.transaction.signatures.len(), 1);
+    assert_eq!(btci_tx.transaction.signatures[0].0, *btci_tx_signature);
+    // Get token transfer instruction
+    let mut ixs = btci_tx
+        .transaction
+        .message
+        .instructions
+        .into_iter()
+        .filter(|ix| &ix.program == "spl-token" && ix.program_id == spl_token_program_id);
+    let ix = ixs.next().unwrap();
+    assert!(ixs.next().is_none());
+
+    assert_eq!(&ix.parsed.instruction_type, "transferChecked");
+    let info: DomiTransactionInstructionInfo = serde_json::from_value(ix.parsed.info).unwrap();
+    // Verify transfer authority is request sender
+    assert_eq!(&info.authority, domi_address);
+    // Verify transfer destination is service account
+    let service_token_account = get_account_address(*mint_address);
+    assert_eq!(info.destination, service_token_account);
+    // Verify mint address
+    assert_eq!(info.mint, *mint_address);
+    // Verify BTCi token amount is same as in request
+    assert_eq!(
+        info.token_amount["amount"].as_str().unwrap(),
+        withdraw_amount
+    );
+
+    let request_body = json!({
+        "mint_address": mint_address.to_string(),
+        "withdraw_address": withdraw_address,
+        "withdraw_amount": withdraw_amount,
+        "fee_rate": fee_rate,
+        "vbytes": vbytes,
+        "domi_address": domi_address.to_string(),
+        "block_height": block_height,
+        "btci_tx_signature": btci_tx_signature.to_string(),
+    });
+    let request_body_str = serde_json::to_string(&request_body).unwrap();
+
+    // Verify `signature` is for `request_body` and `domi_address`
+    if !signature.verify(domi_address.as_ref(), request_body_str.as_bytes()) {
+        #[allow(dead_code)]
+        #[derive(Debug)]
+        struct DebugLog {
+            signature: Signature,
+            domi_address: Pubkey,
+            request_body_str: String,
+            request_body: Value,
+        }
+        debug!(
+            "Failed to verify: {:#?}",
+            DebugLog {
+                signature: *signature,
+                domi_address: *domi_address,
+                request_body_str,
+                request_body,
+            }
+        );
+        return Err("Failed to verify".to_string());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_verify_request_signature() {
+    // await temp1.createSignature(new TextEncoder().encode(JSON.stringify({a:5,b:6})))
+    // 4LaPQGRQHbjNyv4ET9CtDiPCBoZSBgXLSesmXAwtNKB7n1HYdbRNTiKg6T3YTitHPsuW31gAyiyJ4i3PHgZSGkZK
+    // temp1.provider.publicKey.toString()
+    // 2832BAbZJ1WoZ56DzgpWX7dhvwnqRdKdNpC2oUpYyDjH
+
+    let signature: Signature =
+        "4LaPQGRQHbjNyv4ET9CtDiPCBoZSBgXLSesmXAwtNKB7n1HYdbRNTiKg6T3YTitHPsuW31gAyiyJ4i3PHgZSGkZK"
+            .parse()
+            .unwrap();
+    let domi_address: Pubkey = "2832BAbZJ1WoZ56DzgpWX7dhvwnqRdKdNpC2oUpYyDjH"
+        .parse()
+        .unwrap();
+
+    let request_body = json!({"a":5,"b":6});
+    let request_body_str = serde_json::to_string(&request_body).unwrap();
+
+    // let message = domichain_sdk::offchain_message::OffchainMessage::new(0, request_body_str.as_bytes()).unwrap();
+
+    // Verify `signature` is for `request_body` and `domi_address`
+    assert!(signature.verify(domi_address.as_ref(), request_body_str.as_bytes()));
+
+    let domi_address_wrong: Pubkey = "2832BAbZJ1WoZ56DzgpWX7dhvwqqRdKdNpC2oUpYyDjH"
+        .parse()
+        .unwrap();
+    let signature_wrong: Signature =
+        "4LaPQGRQHbjNyv4ET9CtDiPCBoZSBgXLSesmXAwtNKB7n1HYdbRhTiKg6T3YTitHPsuW31gAyiyJ4i3PHgZSGkZK"
+            .parse()
+            .unwrap();
+    let request_body_wrong = json!({"a":5,"b":7});
+    let request_body_str_wrong = serde_json::to_string(&request_body_wrong).unwrap();
+    assert!(!signature.verify(domi_address_wrong.as_ref(), request_body_str.as_bytes()));
+    assert!(!signature_wrong.verify(domi_address.as_ref(), request_body_str.as_bytes()));
+    assert!(!signature.verify(domi_address.as_ref(), request_body_str_wrong.as_bytes()));
 }
 
 pub async fn onesig(

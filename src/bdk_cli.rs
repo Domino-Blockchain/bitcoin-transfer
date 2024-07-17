@@ -6,7 +6,7 @@ use std::{
 };
 
 use tokio::{fs::remove_dir_all, process::Command, sync::Semaphore};
-use tracing::{debug, error};
+use tracing::debug;
 
 pub async fn exec_with_json_output(
     args: impl IntoIterator<Item = impl AsRef<OsStr>>,

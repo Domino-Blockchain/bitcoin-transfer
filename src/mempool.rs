@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Instant};
+use std::time::Instant;
 
 use bdk::{bitcoin::Network, FeeRate};
 use cached::{proc_macro::cached, Return};

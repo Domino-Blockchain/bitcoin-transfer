@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -243,6 +242,7 @@ impl DB {
                 .key_alt_names([DATAKEY_NAME.to_string()])
                 .run()
                 .await?;
+            info!("Created datakey: {data_key_id}");
         }
 
         Ok((client, client_encryption))

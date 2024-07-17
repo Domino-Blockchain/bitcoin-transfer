@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use axum::Json;
+use domichain_account_decoder::parse_token::token_amount_to_ui_amount;
 use domichain_program::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -39,6 +40,24 @@ pub fn get_account_address(token_address: Pubkey) -> Pubkey {
     pubkey
 }
 
+#[test]
+fn test_get_account_address() {
+    std::env::set_var(
+        "SPL_TOKEN_PROGRAM_ID",
+        "BTCi9FUjBVY3BSaqjzfhEPKVExuvarj8Gtfn4rJ5soLC",
+    );
+    std::env::set_var(
+        "SPL_TOKEN_CLI_PATH",
+        "/home/btc-transfer/spl-token_from_domi",
+    );
+    std::env::set_var("DOMICHAIN_RPC_URL", "https://api.testnet.domichain.io/");
+    dbg!(get_account_address(
+        "Dm6phGa5eh7ihFtvbqM2cjxYrpvvzg5h5y3CnrXHEb2x"
+            .parse()
+            .unwrap()
+    ));
+}
+
 #[derive(Deserialize)]
 pub struct MintTokenRequest {
     pub amount: String,
@@ -64,11 +83,12 @@ pub struct MintTokenResult {
     pub account_address: String,
     pub output: serde_json::Value,
 }
+
 pub async fn mint_token_inner(amount: &str, address: &str) -> anyhow::Result<MintTokenResult> {
     let amount_satomis: u64 = amount.parse().unwrap();
-    let amount_domis = tokens_to_ui_amount(amount_satomis, 8);
-    let amount_domis = amount_domis.to_string();
-    info!("amount_domis: {}", &amount_domis);
+    let ui_amount = token_amount_to_ui_amount(amount_satomis, 8);
+    let amount_domis = ui_amount.ui_amount_string;
+    info!("amount_domis: {amount_domis}");
 
     let mut out = Vec::new();
     let create_token_result = spl_token(&["create-token", "--decimals", "8"]);

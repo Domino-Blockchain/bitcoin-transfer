@@ -1,7 +1,11 @@
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use futures::{SinkExt, StreamExt, TryStreamExt};
-use mongodb::bson::doc;
+use mongodb::{bson::doc, results::InsertOneResult};
 use serde_json::json;
 use tokio::{
     select,
@@ -173,20 +177,54 @@ pub async fn watch_addresses(
 }
 
 pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitcoin::Network) {
+    let mut sleep_duration = Duration::from_secs(1);
+    let mut last_sleep = Instant::now();
+    let sleep_reset_interval = Duration::from_secs(10 * 60); // 10min
+    let mut sleep_duration = std::iter::from_fn(|| {
+        if last_sleep.elapsed() > sleep_reset_interval {
+            // Reset sleep
+            sleep_duration = Duration::from_secs(1);
+        } else {
+            sleep_duration = sleep_duration
+                .checked_mul(2)
+                .unwrap()
+                .checked_add(Duration::from_millis(500))
+                .unwrap();
+        }
+        last_sleep = Instant::now();
+        Some(sleep_duration)
+    });
+
     loop {
         let db = db.clone();
-        let address = address.clone();
+        let address_clone = address.clone();
+        let address_clone_2 = address.clone();
         info!("Subscribing on {address}");
-        let (ws_stream, _) = connect_async(get_mempool_ws_url(btc_network))
-            .await
-            .expect("Failed to connect");
 
-        let (mut ws_write, ws_read) = ws_stream.split();
+        let connect_handle = tokio::spawn(async move {
+            let address = address_clone;
+            let (ws_stream, _) = connect_async(get_mempool_ws_url(btc_network))
+                .await
+                .expect("Failed to connect");
 
-        let init = json!({"action": "init"}).to_string();
-        ws_write.send(Message::text(init)).await.unwrap();
-        let track_addresses = json!({"track-addresses": [&address]}).to_string();
-        ws_write.send(Message::text(track_addresses)).await.unwrap();
+            let (mut ws_write, ws_read) = ws_stream.split();
+
+            let init = json!({"action": "init"}).to_string();
+            ws_write.send(Message::text(init)).await.unwrap();
+            let track_addresses = json!({"track-addresses": [&address]}).to_string();
+            ws_write.send(Message::text(track_addresses)).await.unwrap();
+
+            (ws_write, ws_read)
+        });
+
+        let (mut ws_write, ws_read) = match connect_handle.await {
+            Ok((ws_write, ws_read)) => (ws_write, ws_read),
+            Err(connect_error) => {
+                error!("WebSocket connect_error: {connect_error:?}");
+                sleep(sleep_duration.next().unwrap()).await;
+                continue;
+            }
+        };
 
         let write_handle = tokio::spawn(async move {
             let mut ping_interval = interval(PING_INTERVAL);
@@ -202,6 +240,7 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
         });
 
         let read_handle = tokio::spawn(async move {
+            let address = address_clone_2;
             ws_read
                 .try_for_each(|msg| async {
                     match msg {
@@ -214,8 +253,7 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
                             msg_object.retain(|k, _| !IGNORED_KEYS.contains(&k.as_str()));
                             // disable auto messages
                             info!(
-                                "got: {:?} {}",
-                                keys,
+                                "got: {keys:?} {}",
                                 serde_json::to_string_pretty(&msg_json).unwrap(),
                             );
                             // Get amount from TX
@@ -229,81 +267,7 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
                                 let address_state = &addresses[&address];
                                 let confirmed = address_state["confirmed"].as_array().unwrap();
                                 if !confirmed.is_empty() {
-                                    let data = db
-                                        .find_by_deposit_address(&address)
-                                        .await
-                                        .unwrap()
-                                        .expect("multisig address doesn't found");
-                                    let domi_address = data.get_str("domi_address").unwrap();
-
-                                    let vout = confirmed[0]["vout"].as_array().unwrap();
-                                    assert_eq!(
-                                        vout.iter()
-                                            .filter(|dest| dest["scriptpubkey_address"]
-                                                .as_str()
-                                                .unwrap()
-                                                == &address)
-                                            .count(),
-                                        1
-                                    );
-                                    let address_vout = vout
-                                        .iter()
-                                        .filter(|dest| {
-                                            dest["scriptpubkey_address"].as_str().unwrap()
-                                                == &address
-                                        })
-                                        .next()
-                                        .unwrap();
-                                    let value = address_vout["value"].as_number().unwrap();
-                                    if !value.is_u64() {
-                                        todo!("value is wrong type: {value:?}");
-                                    }
-                                    let value = value.as_u64().unwrap();
-
-                                    // TODO: save in DB
-                                    let tx_hash = confirmed[0]["txid"].as_str().unwrap();
-                                    // FIXME: insert instead
-                                    let insert_result = db
-                                        .insert_tx(doc! {
-                                            "tx_hash": tx_hash,
-                                            "confirmed": true,
-                                            "multi_address": &address,
-                                            "value": value.to_string(),
-                                        })
-                                        .await
-                                        .unwrap();
-                                    info!("Inserted TX. DB ID: {}", insert_result.inserted_id);
-
-                                    // TODO: mint token
-                                    // Fail if:
-                                    // - network issue
-                                    // - insufficient balance
-                                    // - address already exists
-                                    let mint_result =
-                                        mint_token_inner(&value.to_string(), domi_address).await;
-                                    info!("mint_result: {mint_result:#?}");
-                                    let mint_result = mint_result.unwrap();
-
-                                    // TODO: save mint result
-                                    let res = db
-                                        .update_tx(
-                                            insert_result.inserted_id,
-                                            doc! {
-                                                "minted": true,
-                                                "mint_address": mint_result.mint_address,
-                                                "account_address": mint_result.account_address,
-                                                "domi_address": domi_address
-                                            },
-                                        )
-                                        .await
-                                        .unwrap();
-                                    assert_eq!(res.matched_count, 1);
-                                    assert_eq!(res.modified_count, 1);
-                                    assert_eq!(res.upserted_id, None);
-
-                                    if confirmed.len() > 1 {
-                                        todo!();
-                                    }
+                                    process_confirmed_transaction(&db, &address, confirmed).await;
                                 }
                             }
                         }
@@ -322,6 +286,75 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
             error!("WebSocket read_error: {read_error:?}");
         }
 
-        sleep(Duration::from_secs(1)).await;
+        sleep(sleep_duration.next().unwrap()).await;
+    }
+}
+
+async fn process_confirmed_transaction(db: &DB, address: &str, confirmed: &[serde_json::Value]) {
+    // Find corresponding DOMI address
+    let data = db
+        .find_by_deposit_address(address)
+        .await
+        .unwrap()
+        .expect("multisig address doesn't found");
+    let domi_address = data.get_str("domi_address").unwrap();
+
+    // Get TX output and value in sat
+    let vout = confirmed[0]["vout"].as_array().unwrap();
+    assert_eq!(
+        vout.iter()
+            .filter(|dest| dest["scriptpubkey_address"].as_str().unwrap() == address)
+            .count(),
+        1
+    );
+    let address_vout = vout
+        .iter()
+        .find(|dest| dest["scriptpubkey_address"].as_str().unwrap() == address)
+        .unwrap();
+    let value = address_vout["value"].as_number().unwrap();
+    if !value.is_u64() {
+        todo!("value is wrong type: {value:?}");
+    }
+    let value = value.as_u64().unwrap();
+
+    let tx_hash = confirmed[0]["txid"].as_str().unwrap();
+    let InsertOneResult { inserted_id, .. } = db
+        .insert_tx(doc! {
+            "tx_hash": tx_hash,
+            "confirmed": true,
+            "multi_address": address,
+            "value": value.to_string(),
+        })
+        .await
+        .unwrap();
+    info!("Inserted TX. DB ID: {inserted_id}");
+
+    // Fail if:
+    // - network issue
+    // - insufficient balance
+    // - address already exists
+    let mint_result = mint_token_inner(&value.to_string(), domi_address).await;
+    info!("mint_result: {mint_result:#?}");
+    let mint_result = mint_result.unwrap();
+
+    // TODO: save mint result
+    let res = db
+        .update_tx(
+            inserted_id,
+            doc! {
+                "minted": true,
+                "mint_address": mint_result.mint_address,
+                "account_address": mint_result.account_address,
+                "domi_address": domi_address,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.matched_count, 1);
+    assert_eq!(res.modified_count, 1);
+    assert_eq!(res.upserted_id, None);
+
+    if confirmed.len() > 1 {
+        todo!("Confirmed TXs array have multiple entries");
     }
 }

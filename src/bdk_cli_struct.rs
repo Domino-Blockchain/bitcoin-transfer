@@ -1,9 +1,4 @@
-use std::{
-    borrow::Cow,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Instant,
-};
+use std::{borrow::Cow, path::Path, sync::Arc, time::Instant};
 
 use bdk::{bitcoin::Network, FeeRate};
 use futures::Future;

@@ -16,6 +16,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 mongodb = { version = "2.8.2", features = ["in-use-encryption-unstable"] }
 
 domichain-program = { path = "../domichain/sdk/program" }
+domichain-sdk = { path = "../domichain/sdk" }
+domichain-account-decoder = { path = "../domichain/account-decoder" }
 clap = { version = "4.5.8", features = ["derive", "env", "cargo"] }
 ron = { git = "https://github.com/ron-rs/ron.git" }
 tower-http = { version = "0.5.2", features = ["cors"] }

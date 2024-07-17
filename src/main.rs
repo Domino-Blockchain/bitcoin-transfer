@@ -13,6 +13,7 @@ mod sign_multisig_tx;
 mod spl_token;
 mod watch_addresses;
 mod watch_tx;
+mod domichain;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -21,7 +22,6 @@ use std::time::Duration;
 
 use axum::http::{self, HeaderValue, Method};
 use axum::routing::post;
-use axum::Json;
 use axum::Router;
 use clap::Parser;
 use domichain_program::pubkey::Pubkey;
@@ -36,16 +36,16 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::db::DB;
-use crate::deprecated::{
-    burn_token, check_balance, check_destination_balance, get_new_service_address, send_btc_to_user,
-};
+// use crate::deprecated::{
+//     burn_token, check_balance, check_destination_balance, get_new_service_address, send_btc_to_user,
+// };
 use crate::estimate_fee::estimate_fee;
 use crate::get_address::get_address_from_db;
-use crate::get_mint_info::get_mint_info;
-use crate::mint_token::mint_token;
+// use crate::get_mint_info::get_mint_info;
+// use crate::mint_token::mint_token;
 use crate::sign_multisig_tx::sign_multisig_tx;
 use crate::spl_token::spl_token;
-use crate::watch_tx::watch_tx;
+// use crate::watch_tx::watch_tx;
 
 #[derive(Clone)]
 struct ArcPathValueParser;
@@ -174,14 +174,15 @@ async fn main() {
         spl_token_program_id,
         bdk_cli_path_default,
         bdk_cli_path_patched,
-        btc_network,
+        btc_network: _,
         ledger_keys_path,
-        aws_access_key_id,
-        aws_secret_access_key,
-        aws_region,
+        aws_access_key_id: _,
+        aws_secret_access_key: _,
+        aws_region: _,
     } = &args;
 
     let service_allow_origin = service_allow_origin.clone();
+    let service_bind_address = service_bind_address.clone();
 
     assert!(mongodb_master_key_path.exists());
     assert!(spl_token_cli_path.exists());
@@ -200,7 +201,7 @@ async fn main() {
         all_multisig_addresses.len()
     );
 
-    let db_clone = Arc::clone(&db);
+    // let db_clone = Arc::clone(&db);
     let ws_handle = tokio::spawn(async move {
         for (_i, chunk) in all_multisig_addresses.chunks(10).enumerate() {
             let _chunk: Vec<_> = chunk.into_iter().cloned().collect();
@@ -241,7 +242,9 @@ async fn main() {
         )
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
+    let listener = tokio::net::TcpListener::bind(service_bind_address)
+        .await
+        .unwrap();
     info!("listening on http://{}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 

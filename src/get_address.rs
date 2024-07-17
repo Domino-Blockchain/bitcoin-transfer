@@ -1,5 +1,3 @@
-use std::{path::PathBuf, str::FromStr};
-
 use axum::{extract::State, Json};
 use bdk::bitcoin::Network;
 use mongodb::bson::{doc, Document};
