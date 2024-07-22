@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -467,6 +468,47 @@ impl DB {
         }
         multisig_addresses
     }
+
+    pub async fn get_multisig_address_to_mint_addresses_mapping(
+        &self,
+    ) -> HashMap<String, Vec<String>> {
+        let DB {
+            transactions_collection,
+            ..
+        } = self;
+
+        let multisig_addresses = self.get_all_multisig_addresses().await;
+        // All unique
+        assert_eq!(
+            multisig_addresses.len(),
+            HashSet::<&String>::from_iter(&multisig_addresses).len()
+        );
+
+        let mut mapping =
+            HashMap::from_iter(multisig_addresses.into_iter().map(|a| (a, Vec::new())));
+
+        for (multisig_address, mint_addresses) in mapping.iter_mut() {
+            let txs: Vec<_> = transactions_collection
+                .find(
+                    Some(doc! {
+                        "multi_address": multisig_address,
+                        "mint_address": { "$exists": true },
+                    }),
+                    None,
+                )
+                .await
+                .unwrap()
+                .try_collect()
+                .await
+                .unwrap();
+            mint_addresses.extend(
+                txs.into_iter()
+                    .map(|tx| tx.get_str("mint_address").unwrap().to_string()),
+            );
+        }
+
+        mapping
+    }
 }
 
 pub fn get_compressed_pubkey(pubkey_asn_str: &str) -> String {
@@ -475,4 +517,19 @@ pub fn get_compressed_pubkey(pubkey_asn_str: &str) -> String {
     let pubkey = PublicKey::from_slice(pubkey_bytes).unwrap();
     let compressed_pubkey = pubkey.inner.serialize().to_hex();
     compressed_pubkey
+}
+
+#[tokio::test]
+async fn test_get_multisig_address_to_mint_addresses_mapping() {
+    use clap::Parser;
+    use std::sync::Arc;
+
+    kms_sign::load_dotenv();
+    let v: Vec<String> = vec![];
+    let args = crate::Args::parse_from(v);
+    assert!(args.mongodb_master_key_path.exists());
+
+    let db = Arc::new(DB::new(&args.mongodb_uri, &args.mongodb_master_key_path).await);
+
+    dbg!(db.get_multisig_address_to_mint_addresses_mapping().await);
 }
