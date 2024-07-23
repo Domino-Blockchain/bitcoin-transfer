@@ -1,8 +1,10 @@
 mod balance_by_addresses;
 mod bdk_cli;
 mod bdk_cli_struct;
+mod catchup;
 mod db;
 mod deprecated;
+mod domichain;
 mod estimate_fee;
 mod get_address;
 mod get_mint_info;
@@ -13,7 +15,6 @@ mod sign_multisig_tx;
 mod spl_token;
 mod watch_addresses;
 mod watch_tx;
-mod domichain;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,8 @@ use std::time::Duration;
 use axum::http::{self, HeaderValue, Method};
 use axum::routing::post;
 use axum::Router;
+use btc_catchup::BtcTransactionType;
+use catchup::CatchupData;
 use clap::Parser;
 use domichain_program::pubkey::Pubkey;
 use kms_sign::load_dotenv;
@@ -31,9 +34,10 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tokio::time::sleep;
 use tower_http::cors::CorsLayer;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use watch_addresses::{process_confirmed_transaction, Confirmed, Vout};
 
 use crate::db::DB;
 // use crate::deprecated::{
@@ -72,6 +76,10 @@ pub struct Args {
     #[arg(short = 'u', long, env = "DOMICHAIN_RPC_URL")]
     domichain_rpc_url: Url,
 
+    /// Domichain service wallet address
+    #[arg(long, env = "DOMICHAIN_SERVICE_ADDRESS")]
+    domichain_service_address: Pubkey,
+
     /// MongoDB URI
     #[arg(long, env = "MONGODB_URI")]
     mongodb_uri: String,
@@ -91,6 +99,10 @@ pub struct Args {
     /// Dry run, don't send BTC TX
     #[arg(long, default_value_t = false)]
     dry_run: bool,
+
+    /// Do not catchup missed BTC transactions
+    #[arg(long, default_value_t = false)]
+    skip_catchup: bool,
 
     /// Path to spl-token-cli
     #[arg(long, env = "SPL_TOKEN_CLI_PATH", value_parser=ArcPathValueParser)]
@@ -165,11 +177,13 @@ async fn main() {
     let args = Args::parse();
     let Args {
         domichain_rpc_url,
+        domichain_service_address,
         mongodb_uri,
         mongodb_master_key_path,
         service_bind_address,
         service_allow_origin,
         dry_run,
+        skip_catchup,
         spl_token_cli_path,
         spl_token_program_id,
         bdk_cli_path_default,
@@ -200,6 +214,69 @@ async fn main() {
         "all_multisig_addresses.len() = {:#?}",
         all_multisig_addresses.len()
     );
+
+    if !skip_catchup {
+        debug!("starting catchup");
+
+        let CatchupData {
+            all_btc_transactions,
+            all_domi_transactions,
+            btc_address_to_domi_mints,
+        } = catchup::get_catchup_data(
+            db.clone(),
+            *spl_token_program_id,
+            *domichain_service_address,
+            all_multisig_addresses.clone(),
+        )
+        .await;
+
+        let (mut missed_mints, mut amount_mismatch) = btc_catchup::do_catchup(
+            all_btc_transactions,
+            all_domi_transactions,
+            btc_address_to_domi_mints,
+        )
+        .await;
+
+        missed_mints.iter().for_each(|btc_tx| {
+            warn!("No DOMI mint found for BTC deposit. {btc_tx:#?}");
+        });
+
+        amount_mismatch.iter().for_each(|(btc_tx, domi_mint)| {
+            warn!("Amount mismatch for deposit and mint: {btc_tx:#?}\n{domi_mint:#?}");
+        });
+
+        for btc_tx in missed_mints.drain(..) {
+            let vout = btc_tx
+                .vout
+                .into_iter()
+                .filter_map(|vout| {
+                    vout.scriptpubkey_address.map(|scriptpubkey_address| Vout {
+                        scriptpubkey_address: scriptpubkey_address,
+                        value: vout.value,
+                    })
+                })
+                .collect();
+            let confirmed_tx = Confirmed {
+                txid: btc_tx.tx_id,
+                vout,
+            };
+            assert!(matches!(btc_tx.tx_type, BtcTransactionType::Deposit));
+            let multisig_address = btc_tx.to_address;
+            process_confirmed_transaction(&db, &multisig_address, confirmed_tx).await;
+        }
+
+        amount_mismatch.retain(|(btc_tx, _domi_tx)| {
+            let skip_txs = ["f697db2d2962b976150aae2c2292fdb3df3938c82fe67327aa5600d29fa0d75f"];
+            !skip_txs.contains(&btc_tx.tx_id.as_str())
+        });
+
+        assert!(missed_mints.is_empty());
+        assert!(amount_mismatch.is_empty());
+
+        debug!("catchup finished");
+    } else {
+        debug!("catchup skipped");
+    }
 
     // let db_clone = Arc::clone(&db);
     let ws_handle = tokio::spawn(async move {

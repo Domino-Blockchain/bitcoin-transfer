@@ -6,6 +6,7 @@ use std::{
 
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use mongodb::{bson::doc, results::InsertOneResult};
+use serde::Deserialize;
 use serde_json::json;
 use tokio::{
     select,
@@ -267,7 +268,13 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
                                 let address_state = &addresses[&address];
                                 let confirmed = address_state["confirmed"].as_array().unwrap();
                                 if !confirmed.is_empty() {
-                                    process_confirmed_transaction(&db, &address, confirmed).await;
+                                    let confirmed_tx =
+                                        serde_json::from_value(confirmed[0].clone()).unwrap();
+                                    process_confirmed_transaction(&db, &address, confirmed_tx)
+                                        .await;
+                                    if confirmed.len() > 1 {
+                                        todo!("Confirmed TXs array have multiple entries");
+                                    }
                                 }
                             }
                         }
@@ -290,7 +297,19 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
     }
 }
 
-async fn process_confirmed_transaction(db: &DB, address: &str, confirmed: &[serde_json::Value]) {
+#[derive(Debug, Deserialize)]
+pub struct Vout {
+    pub scriptpubkey_address: String,
+    pub value: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Confirmed {
+    pub txid: String,
+    pub vout: Vec<Vout>,
+}
+
+pub async fn process_confirmed_transaction(db: &DB, address: &str, confirmed: Confirmed) {
     // Find corresponding DOMI address
     let data = db
         .find_by_deposit_address(address)
@@ -300,24 +319,20 @@ async fn process_confirmed_transaction(db: &DB, address: &str, confirmed: &[serd
     let domi_address = data.get_str("domi_address").unwrap();
 
     // Get TX output and value in sat
-    let vout = confirmed[0]["vout"].as_array().unwrap();
+    let vout = confirmed.vout;
     assert_eq!(
         vout.iter()
-            .filter(|dest| dest["scriptpubkey_address"].as_str().unwrap() == address)
+            .filter(|dest| dest.scriptpubkey_address == address)
             .count(),
         1
     );
     let address_vout = vout
         .iter()
-        .find(|dest| dest["scriptpubkey_address"].as_str().unwrap() == address)
+        .find(|dest| dest.scriptpubkey_address == address)
         .unwrap();
-    let value = address_vout["value"].as_number().unwrap();
-    if !value.is_u64() {
-        todo!("value is wrong type: {value:?}");
-    }
-    let value = value.as_u64().unwrap();
+    let value = address_vout.value;
 
-    let tx_hash = confirmed[0]["txid"].as_str().unwrap();
+    let tx_hash = confirmed.txid;
     let InsertOneResult { inserted_id, .. } = db
         .insert_tx(doc! {
             "tx_hash": tx_hash,
@@ -353,8 +368,4 @@ async fn process_confirmed_transaction(db: &DB, address: &str, confirmed: &[serd
     assert_eq!(res.matched_count, 1);
     assert_eq!(res.modified_count, 1);
     assert_eq!(res.upserted_id, None);
-
-    if confirmed.len() > 1 {
-        todo!("Confirmed TXs array have multiple entries");
-    }
 }

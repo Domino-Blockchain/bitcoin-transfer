@@ -42,6 +42,7 @@ primitive-types = "0.12.2"
 bitcoin = { path = "multisig_scripts/rust-bitcoin", version = "0.29.2", features = ["serde", "base64", "rand"] }
 tokio-tungstenite = { version = "0.23.1", features = ["native-tls"] }
 cached = { version = "0.52.0", features = ["async"] }
+btc_catchup = { path = "multisig_scripts/btc_catchup" }
 
 # spl-token-cli = { path = "../domichain-program-library/token/cli/src/main.rs" }
 

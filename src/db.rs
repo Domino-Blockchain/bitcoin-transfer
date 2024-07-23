@@ -2,10 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+use std::str::FromStr;
 
 use base64::prelude::*;
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::PublicKey;
+use domichain_sdk::pubkey::Pubkey;
 use futures::TryStreamExt;
 use kms_sign::parse_asn_pubkey;
 use mongodb::bson::{self, doc, Bson, Document};
@@ -471,7 +473,7 @@ impl DB {
 
     pub async fn get_multisig_address_to_mint_addresses_mapping(
         &self,
-    ) -> HashMap<String, Vec<String>> {
+    ) -> HashMap<String, Vec<Pubkey>> {
         let DB {
             transactions_collection,
             ..
@@ -503,7 +505,7 @@ impl DB {
                 .unwrap();
             mint_addresses.extend(
                 txs.into_iter()
-                    .map(|tx| tx.get_str("mint_address").unwrap().to_string()),
+                    .map(|tx| Pubkey::from_str(tx.get_str("mint_address").unwrap()).unwrap()),
             );
         }
 
