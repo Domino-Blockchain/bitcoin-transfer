@@ -10,7 +10,7 @@ use std::{
 
 use cached::{proc_macro::io_cached, Return};
 use domichain_sdk::pubkey::Pubkey;
-use mempool::Vout;
+use mempool::{Vin, Vout};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use tokio::time::{sleep, timeout};
@@ -174,6 +174,7 @@ pub enum BtcTransactionType {
 #[derive(Debug)]
 pub struct BtcTransaction {
     pub tx_id: BtcTxHash,
+    pub vin: Vec<Vin>,
     pub vout: Vec<Vout>,
     pub from_address: BtcAddress,
     pub to_address: BtcAddress,

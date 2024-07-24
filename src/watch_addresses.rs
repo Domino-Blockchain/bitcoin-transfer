@@ -8,18 +8,12 @@ use futures::{SinkExt, StreamExt, TryStreamExt};
 use mongodb::{bson::doc, results::InsertOneResult};
 use serde::Deserialize;
 use serde_json::json;
-use tokio::{
-    select,
-    sync::mpsc::{UnboundedReceiver, UnboundedSender},
-    task::JoinHandle,
-    time::{interval, sleep},
-};
+use tokio::time::{interval, sleep};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{error, info};
 
 use crate::{db::DB, mempool::get_mempool_ws_url, mint_token::mint_token_inner};
 
-const MEMPOOL_CHANNEL_LIMIT: usize = 10;
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 
 const IGNORED_KEYS: &[&str] = &[
@@ -37,145 +31,6 @@ const IGNORED_KEYS: &[&str] = &[
     "fees",
     "pong",
 ];
-
-struct Channel {
-    id: String,
-    addresses: Vec<String>,
-}
-
-impl Channel {
-    fn new(id: String, addresses: Vec<String>) -> Self {
-        assert!(!addresses.is_empty());
-        assert!(addresses.len() <= MEMPOOL_CHANNEL_LIMIT);
-        // TODO: start connection
-
-        Self { id, addresses }
-    }
-
-    fn push(&mut self, address: String) -> Result<(), String> {
-        if !self.is_full() {
-            todo!()
-        } else {
-            Err(address)
-        }
-    }
-
-    fn is_full(&self) -> bool {
-        self.addresses.len() >= MEMPOOL_CHANNEL_LIMIT
-    }
-}
-
-pub struct MempoolWatcher {
-    channels: Vec<Channel>,
-}
-
-impl MempoolWatcher {
-    pub fn new() -> Self {
-        Self {
-            channels: Vec::new(),
-        }
-    }
-
-    pub fn push(&mut self, address: String) {
-        if self.channels.is_empty() || self.channels.last().unwrap().is_full() {
-            self.channels.push(Channel::new(
-                format!("{}", self.channels.len()),
-                vec![address],
-            ));
-        } else {
-            self.channels.last_mut().unwrap().push(address).unwrap();
-        }
-    }
-}
-
-pub struct Update {
-    address: String,
-    new_tx_id: String,
-}
-
-pub async fn watch_addresses(
-    watch_id: usize,
-    addresses: Vec<String>,
-    mut subscribe: UnboundedReceiver<String>,
-    unsubscribe: UnboundedReceiver<String>,
-    on_update: UnboundedSender<Update>,
-    btc_network: bdk::bitcoin::Network,
-) -> (JoinHandle<()>, JoinHandle<()>) {
-    let (ws_stream, _) = connect_async(get_mempool_ws_url(btc_network))
-        .await
-        .expect("Failed to connect");
-
-    let (mut ws_write, ws_read) = ws_stream.split();
-
-    let init = json!({"action": "init"}).to_string();
-    ws_write.send(Message::text(init)).await.unwrap();
-    let track_addresses = json!({"track-addresses": addresses}).to_string();
-    ws_write.send(Message::text(track_addresses)).await.unwrap();
-
-    let write_handle = tokio::spawn(async move {
-        let mut ping_interval = interval(PING_INTERVAL);
-        ping_interval.tick().await;
-
-        let handle_sub = |address| async {};
-        // let mut handle_interval = |ws_write_mut| async move {
-        //     ws_write_mut
-        //         .send(Message::text(json!({"action": "ping"}).to_string()))
-        //         .await
-        //         .unwrap();
-        // };
-
-        loop {
-            select! {
-                address = subscribe.recv() => handle_sub(address).await,
-                // _ = ping_interval.tick() => handle_interval(&mut ws_write).await,
-                _ = ping_interval.tick() => {
-                    ws_write
-                        .send(Message::text(json!({"action": "ping"}).to_string()))
-                        .await
-                        .unwrap();
-                },
-            };
-
-            // match subscribe.try_recv() {
-            //     Ok(address) => {
-            //         ws_write
-            //             .send(Message::text(json!({"track-address": address}).to_string()))
-            //             .await
-            //             .unwrap();
-            //     }
-            //     Err(TryRecvError::Empty) => {}
-            //     Err(TryRecvError::Disconnected) => panic!("Disconnected"),
-            // }
-        }
-    });
-
-    let read_handle = tokio::spawn(async move {
-        ws_read
-            .try_for_each(|msg| async {
-                match msg {
-                    Message::Text(msg) => {
-                        let mut msg_json: serde_json::Value = serde_json::from_str(&msg).unwrap();
-                        let msg_object = msg_json.as_object_mut().unwrap();
-                        let keys: HashSet<_> = msg_object.keys().map(|s| s.to_string()).collect();
-                        msg_object.retain(|k, _| !IGNORED_KEYS.contains(&k.as_str()));
-                        // disable auto messages
-                        println!(
-                            "{watch_id} got: {:?} {}",
-                            keys,
-                            serde_json::to_string_pretty(&msg_json).unwrap(),
-                        );
-                    }
-                    other => panic!("expected a text message but got {other:?}"),
-                }
-                Ok(())
-            })
-            .await
-            .unwrap();
-    });
-    // write_handle.await.unwrap();
-    // read_handle.await.unwrap();
-    (read_handle, write_handle)
-}
 
 pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitcoin::Network) {
     let mut sleep_duration = Duration::from_secs(1);
@@ -196,6 +51,7 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
         Some(sleep_duration)
     });
 
+    // Infinite loop to retry subscription on errors
     loop {
         let db = db.clone();
         let address_clone = address.clone();
@@ -229,7 +85,6 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
 
         let write_handle = tokio::spawn(async move {
             let mut ping_interval = interval(PING_INTERVAL);
-            ping_interval.tick().await;
 
             loop {
                 ping_interval.tick().await;
@@ -245,39 +100,7 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
             ws_read
                 .try_for_each(|msg| async {
                     match msg {
-                        Message::Text(msg) => {
-                            let mut msg_json: serde_json::Value =
-                                serde_json::from_str(&msg).unwrap();
-                            let msg_object = msg_json.as_object_mut().unwrap();
-                            let keys: HashSet<_> =
-                                msg_object.keys().map(|s| s.to_string()).collect();
-                            msg_object.retain(|k, _| !IGNORED_KEYS.contains(&k.as_str()));
-                            // disable auto messages
-                            info!(
-                                "got: {keys:?} {}",
-                                serde_json::to_string_pretty(&msg_json).unwrap(),
-                            );
-                            // Get amount from TX
-                            // Get multisig address by TX info
-                            // Get domi address by multisig address
-                            let msg_object = msg_json.as_object_mut().unwrap();
-                            if msg_object.contains_key("multi-address-transactions") {
-                                let addresses = msg_object["multi-address-transactions"]
-                                    .as_object()
-                                    .unwrap();
-                                let address_state = &addresses[&address];
-                                let confirmed = address_state["confirmed"].as_array().unwrap();
-                                if !confirmed.is_empty() {
-                                    let confirmed_tx =
-                                        serde_json::from_value(confirmed[0].clone()).unwrap();
-                                    process_confirmed_transaction(&db, &address, confirmed_tx)
-                                        .await;
-                                    if confirmed.len() > 1 {
-                                        todo!("Confirmed TXs array have multiple entries");
-                                    }
-                                }
-                            }
-                        }
+                        Message::Text(msg) => handle_text_message(&db, &address, &msg).await,
                         other => panic!("expected a text message but got {other:?}"),
                     }
                     Ok(())
@@ -297,6 +120,44 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
     }
 }
 
+pub async fn handle_text_message(db: &DB, address: &str, msg: &str) {
+    let mut msg_json: serde_json::Value = serde_json::from_str(msg).unwrap();
+    let msg_object = msg_json.as_object_mut().unwrap();
+    let keys: HashSet<_> = msg_object.keys().map(|s| s.to_string()).collect();
+    // disable auto messages
+    msg_object.retain(|k, _| !IGNORED_KEYS.contains(&k.as_str()));
+    if !msg_object.is_empty() {
+        info!(
+            "got: {keys:?} {}",
+            serde_json::to_string_pretty(msg_object).unwrap(),
+        );
+    }
+    // Get amount from TX
+    // Get multisig address by TX info
+    // Get domi address by multisig address
+    if let Some(addresses) = msg_object.get("multi-address-transactions") {
+        let confirmed = addresses[&address]["confirmed"].as_array().unwrap();
+        if !confirmed.is_empty() {
+            let confirmed_tx = serde_json::from_value(confirmed[0].clone()).unwrap();
+            process_confirmed_transaction(&db, &address, confirmed_tx).await;
+
+            if confirmed.len() > 1 {
+                todo!("Confirmed TXs array have multiple entries");
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VinPrevout {
+    pub scriptpubkey_address: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Vin {
+    pub prevout: VinPrevout,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Vout {
     pub scriptpubkey_address: String,
@@ -306,30 +167,37 @@ pub struct Vout {
 #[derive(Debug, Deserialize)]
 pub struct Confirmed {
     pub txid: String,
+    pub vin: Vec<Vin>,
     pub vout: Vec<Vout>,
 }
 
-pub async fn process_confirmed_transaction(db: &DB, address: &str, confirmed: Confirmed) {
+/// Find deposit amount and do the BTCi mint
+pub async fn process_confirmed_transaction(db: &DB, multi_address: &str, confirmed: Confirmed) {
     // Find corresponding DOMI address
     let data = db
-        .find_by_deposit_address(address)
+        .find_by_deposit_address(multi_address)
         .await
         .unwrap()
         .expect("multisig address doesn't found");
     let domi_address = data.get_str("domi_address").unwrap();
 
+    // Check that this deposit is from external address
+    let vin = confirmed.vin;
+    let known_multisig_addresses: HashSet<String> =
+        HashSet::from_iter(db.get_all_multisig_addresses().await);
+    assert!(!vin
+        .iter()
+        .any(|vin| known_multisig_addresses.contains(&vin.prevout.scriptpubkey_address)));
+
     // Get TX output and value in sat
     let vout = confirmed.vout;
-    assert_eq!(
-        vout.iter()
-            .filter(|dest| dest.scriptpubkey_address == address)
-            .count(),
-        1
-    );
-    let address_vout = vout
+    // Transaction have only one our multisig address in output
+    let mut vouts = vout
         .iter()
-        .find(|dest| dest.scriptpubkey_address == address)
-        .unwrap();
+        .filter(|dest| dest.scriptpubkey_address == multi_address);
+    let address_vout = vouts.next().unwrap();
+    assert!(vouts.next().is_none());
+
     let value = address_vout.value;
 
     let tx_hash = confirmed.txid;
@@ -337,7 +205,7 @@ pub async fn process_confirmed_transaction(db: &DB, address: &str, confirmed: Co
         .insert_tx(doc! {
             "tx_hash": tx_hash,
             "confirmed": true,
-            "multi_address": address,
+            "multi_address": multi_address,
             "value": value.to_string(),
         })
         .await
@@ -352,7 +220,6 @@ pub async fn process_confirmed_transaction(db: &DB, address: &str, confirmed: Co
     info!("mint_result: {mint_result:#?}");
     let mint_result = mint_result.unwrap();
 
-    // TODO: save mint result
     let res = db
         .update_tx(
             inserted_id,

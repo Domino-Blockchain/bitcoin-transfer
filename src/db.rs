@@ -303,19 +303,6 @@ impl DB {
             ..
         } = self;
 
-        // Dbg all mint addresses
-        let dbg_all_mint_addresses = true;
-        if dbg_all_mint_addresses {
-            let mut cursor = transactions_collection.find(None, None).await.unwrap();
-            let mut mint_addresess = vec![];
-            while let Some(document) = cursor.try_next().await.unwrap() {
-                if let Some(a) = document.get("mint_address") {
-                    mint_addresess.push(a.clone());
-                }
-            }
-            info!("mint_addresess: {:#?}", mint_addresess);
-        }
-
         let transaction = if let Some(transaction) = transactions_collection
             .find_one(
                 Some(doc! {
@@ -350,10 +337,7 @@ impl DB {
         deposit_address: &str,
         update: Document,
     ) -> Result<UpdateResult> {
-        let DB {
-            keys_collection, ..
-        } = self;
-        keys_collection
+        self.keys_collection
             .update_one(
                 doc! {
                     "multi_address": deposit_address,
@@ -366,20 +350,22 @@ impl DB {
             .await
     }
 
+    /// Insert a new unique BTC transaction. Checks uniqueness
     pub async fn insert_tx(&self, insert: Document) -> Result<InsertOneResult> {
-        let DB {
-            transactions_collection,
-            ..
-        } = self;
-        transactions_collection.insert_one(insert, None).await
+        // Check that TX hash is unique
+        let new_tx_hash = insert.get_str("tx_hash").unwrap();
+        let existing_tx = self
+            .transactions_collection
+            .find_one(Some(doc! {"tx_hash": new_tx_hash}), None)
+            .await
+            .unwrap();
+        assert_eq!(existing_tx, None);
+
+        self.transactions_collection.insert_one(insert, None).await
     }
 
     pub async fn update_tx(&self, id: Bson, update: Document) -> Result<UpdateResult> {
-        let DB {
-            transactions_collection,
-            ..
-        } = self;
-        transactions_collection
+        self.transactions_collection
             .update_one(
                 doc! {
                     "_id": id,
@@ -392,6 +378,7 @@ impl DB {
             .await
     }
 
+    /// Get info about all AWS KMS keys and choose one based on hash
     pub async fn get_aws_kms_pubkey(&self, hash: U256) -> (String, String, String) {
         #[allow(dead_code)]
         #[derive(Deserialize)]
@@ -423,6 +410,7 @@ impl DB {
         (key_name, key_arn, compressed_pubkey)
     }
 
+    /// Get info about all Google KMS keys and choose one based on hash
     pub async fn get_google_kms_pubkey(&self, hash: U256) -> (String, String) {
         #[allow(dead_code)]
         #[derive(Deserialize)]
@@ -450,25 +438,31 @@ impl DB {
     }
 
     pub async fn get_all_multisig_addresses(&self) -> Vec<String> {
-        let DB {
-            keys_collection, ..
-        } = self;
-        let mut cursor = keys_collection
+        self.keys_collection
             .find(Some(doc! { "multi_address": { "$exists": true } }), None)
             .await
-            .unwrap();
-        let mut multisig_addresses = Vec::new();
-        while let Some(document) = cursor.try_next().await.unwrap() {
-            multisig_addresses.push(
+            .unwrap()
+            .map_ok(|document| document.get_str("multi_address").unwrap().to_string())
+            .try_collect()
+            .await
+            .unwrap()
+    }
+
+    pub async fn get_all_mints(&self) -> Vec<Pubkey> {
+        self.transactions_collection
+            .find(Some(doc! { "mint_address": { "$exists": true } }), None)
+            .await
+            .unwrap()
+            .map_ok(|document| {
                 document
-                    .get("multi_address")
+                    .get_str("mint_address")
                     .unwrap()
-                    .as_str()
+                    .parse::<Pubkey>()
                     .unwrap()
-                    .to_owned(),
-            );
-        }
-        multisig_addresses
+            })
+            .try_collect()
+            .await
+            .unwrap()
     }
 
     pub async fn get_multisig_address_to_mint_addresses_mapping(
@@ -534,4 +528,34 @@ async fn test_get_multisig_address_to_mint_addresses_mapping() {
     let db = Arc::new(DB::new(&args.mongodb_uri, &args.mongodb_master_key_path).await);
 
     dbg!(db.get_multisig_address_to_mint_addresses_mapping().await);
+}
+
+#[tokio::test]
+async fn test_get_all_mints() {
+    use clap::Parser;
+    use std::sync::Arc;
+
+    kms_sign::load_dotenv();
+    let v: Vec<String> = vec![];
+    let args = crate::Args::parse_from(v);
+    assert!(args.mongodb_master_key_path.exists());
+
+    let db = Arc::new(DB::new(&args.mongodb_uri, &args.mongodb_master_key_path).await);
+
+    dbg!(db.get_all_mints().await);
+}
+
+#[tokio::test]
+async fn test_get_all_multisig_addresses() {
+    use clap::Parser;
+    use std::sync::Arc;
+
+    kms_sign::load_dotenv();
+    let v: Vec<String> = vec![];
+    let args = crate::Args::parse_from(v);
+    assert!(args.mongodb_master_key_path.exists());
+
+    let db = Arc::new(DB::new(&args.mongodb_uri, &args.mongodb_master_key_path).await);
+
+    dbg!(db.get_all_multisig_addresses().await);
 }

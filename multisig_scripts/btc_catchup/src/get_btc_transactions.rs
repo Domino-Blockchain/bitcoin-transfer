@@ -142,6 +142,7 @@ pub async fn get_btc_transactions(address: &str) -> Vec<BtcTransaction> {
 
         result.push(BtcTransaction {
             tx_id: tx.txid,
+            vin: tx.vin,
             vout: tx.vout,
             from_address,
             to_address,

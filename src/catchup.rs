@@ -17,11 +17,11 @@ pub async fn get_catchup_data(
     db: Arc<DB>,
     spl_token_program_id: Pubkey,
     service_address: Pubkey,
-    btc_addresses: Vec<BtcAddress>,
+    btc_addresses: &[BtcAddress],
 ) -> CatchupData {
     // Might be duplicates: in case of withdraw to deposit address.
     let mut all_btc_transactions = Vec::new();
-    for a in &btc_addresses {
+    for a in btc_addresses {
         let txs = get_btc_transactions(a).await;
         all_btc_transactions.extend(txs);
     }

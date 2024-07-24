@@ -29,7 +29,8 @@ use crate::{
 pub struct SignMultisigTxRequest {
     #[serde(deserialize_with = "from_str")]
     mint_address: Pubkey,
-    withdraw_address: String, // BTC
+    /// BTC withdraw destination address
+    withdraw_address: String,
     withdraw_amount: String,
     fee_rate: Option<serde_json::Number>,
     vbytes: Option<u64>,
@@ -136,6 +137,10 @@ pub async fn sign_multisig_tx(
     info!("key: {:#?}", &key);
     let _transaction: serde_json::Value = serde_convert(&transaction);
     let key: serde_json::Value = serde_convert(&key);
+
+    // Check that witdraw destination is not one of ours BTC multisig addresses
+    let known_multisig_addresses = state.db.get_all_multisig_addresses().await;
+    assert!(!known_multisig_addresses.contains(&withdraw_address));
 
     // TODO: get fields from meta
 

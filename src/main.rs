@@ -37,7 +37,7 @@ use tower_http::cors::CorsLayer;
 use tracing::{debug, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use watch_addresses::{process_confirmed_transaction, Confirmed, Vout};
+use watch_addresses::{process_confirmed_transaction, Confirmed, Vin, VinPrevout, Vout};
 
 use crate::db::DB;
 // use crate::deprecated::{
@@ -217,62 +217,13 @@ async fn main() {
 
     if !skip_catchup {
         debug!("starting catchup");
-
-        let CatchupData {
-            all_btc_transactions,
-            all_domi_transactions,
-            btc_address_to_domi_mints,
-        } = catchup::get_catchup_data(
+        process_catchup(
             db.clone(),
             *spl_token_program_id,
             *domichain_service_address,
-            all_multisig_addresses.clone(),
+            &all_multisig_addresses,
         )
         .await;
-
-        let (mut missed_mints, mut amount_mismatch) = btc_catchup::do_catchup(
-            all_btc_transactions,
-            all_domi_transactions,
-            btc_address_to_domi_mints,
-        )
-        .await;
-
-        missed_mints.iter().for_each(|btc_tx| {
-            warn!("No DOMI mint found for BTC deposit. {btc_tx:#?}");
-        });
-
-        amount_mismatch.iter().for_each(|(btc_tx, domi_mint)| {
-            warn!("Amount mismatch for deposit and mint: {btc_tx:#?}\n{domi_mint:#?}");
-        });
-
-        for btc_tx in missed_mints.drain(..) {
-            let vout = btc_tx
-                .vout
-                .into_iter()
-                .filter_map(|vout| {
-                    vout.scriptpubkey_address.map(|scriptpubkey_address| Vout {
-                        scriptpubkey_address: scriptpubkey_address,
-                        value: vout.value,
-                    })
-                })
-                .collect();
-            let confirmed_tx = Confirmed {
-                txid: btc_tx.tx_id,
-                vout,
-            };
-            assert!(matches!(btc_tx.tx_type, BtcTransactionType::Deposit));
-            let multisig_address = btc_tx.to_address;
-            process_confirmed_transaction(&db, &multisig_address, confirmed_tx).await;
-        }
-
-        amount_mismatch.retain(|(btc_tx, _domi_tx)| {
-            let skip_txs = ["f697db2d2962b976150aae2c2292fdb3df3938c82fe67327aa5600d29fa0d75f"];
-            !skip_txs.contains(&btc_tx.tx_id.as_str())
-        });
-
-        assert!(missed_mints.is_empty());
-        assert!(amount_mismatch.is_empty());
-
         debug!("catchup finished");
     } else {
         debug!("catchup skipped");
@@ -289,7 +240,7 @@ async fn main() {
         }
     });
 
-    let app_state = AppState::new(db.into(), args);
+    let app_state = AppState::new(db, args);
 
     let app = Router::new()
         .route("/get_address_from_db", post(get_address_from_db))
@@ -326,6 +277,78 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 
     ws_handle.await.unwrap();
+}
+
+async fn process_catchup(
+    db: Arc<DB>,
+    spl_token_program_id: Pubkey,
+    domichain_service_address: Pubkey,
+    all_multisig_addresses: &[String],
+) {
+    let CatchupData {
+        all_btc_transactions,
+        all_domi_transactions,
+        btc_address_to_domi_mints,
+    } = catchup::get_catchup_data(
+        db.clone(),
+        spl_token_program_id,
+        domichain_service_address,
+        all_multisig_addresses,
+    )
+    .await;
+
+    let (mut missed_mints, mut amount_mismatch) = btc_catchup::do_catchup(
+        all_btc_transactions,
+        all_domi_transactions,
+        btc_address_to_domi_mints,
+    )
+    .await;
+
+    missed_mints.iter().for_each(|btc_tx| {
+        warn!("No DOMI mint found for BTC deposit. {btc_tx:#?}");
+    });
+
+    amount_mismatch.iter().for_each(|(btc_tx, domi_mint)| {
+        warn!("Amount mismatch for deposit and mint: {btc_tx:#?}\n{domi_mint:#?}");
+    });
+
+    for btc_tx in missed_mints.drain(..) {
+        let vout = btc_tx
+            .vout
+            .into_iter()
+            .filter_map(|vout| {
+                vout.scriptpubkey_address.map(|scriptpubkey_address| Vout {
+                    scriptpubkey_address: scriptpubkey_address,
+                    value: vout.value,
+                })
+            })
+            .collect();
+        let vin = btc_tx
+            .vin
+            .into_iter()
+            .map(|vin| Vin {
+                prevout: VinPrevout {
+                    scriptpubkey_address: vin.prevout.scriptpubkey_address,
+                },
+            })
+            .collect();
+        let confirmed_tx = Confirmed {
+            txid: btc_tx.tx_id,
+            vin,
+            vout,
+        };
+        assert!(matches!(btc_tx.tx_type, BtcTransactionType::Deposit));
+        let multisig_address = btc_tx.to_address;
+        process_confirmed_transaction(&db, &multisig_address, confirmed_tx).await;
+    }
+
+    amount_mismatch.retain(|(btc_tx, _domi_tx)| {
+        let skip_txs = ["f697db2d2962b976150aae2c2292fdb3df3938c82fe67327aa5600d29fa0d75f"];
+        !skip_txs.contains(&btc_tx.tx_id.as_str())
+    });
+
+    assert!(missed_mints.is_empty());
+    assert!(amount_mismatch.is_empty());
 }
 
 pub fn serde_convert<F, T>(a: F) -> T
