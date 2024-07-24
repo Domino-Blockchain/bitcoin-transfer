@@ -1,9 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{
-    mempool::{self, Vout},
-    BtcTransaction, BtcTransactionType,
-};
+use crate::{mempool, BtcTransaction, BtcTransactionType};
 
 /*
 #[derive(Debug)]
