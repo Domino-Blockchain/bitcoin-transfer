@@ -1,5 +1,6 @@
 use axum::{extract::State, Json};
 use bdk::FeeRate;
+use domichain_sdk::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
 use serde_json::Number;
 use tracing::{debug, info};
@@ -7,13 +8,16 @@ use tracing::{debug, info};
 use crate::{
     bdk_cli_struct::BdkCli,
     mempool::{get_mempool_url, get_recommended_fee_rates, RecommendedFeesResp},
-    serde_convert, AppState, Args,
+    utils::{from_str, serde_convert},
+    AppState, Args,
 };
 
 #[derive(Deserialize)]
 pub struct EstimateFeeRequest {
-    mint_address: String,
-    withdraw_address: String, // BTC
+    #[serde(deserialize_with = "from_str")]
+    mint_address: Pubkey,
+    /// BTC withdraw destination address
+    withdraw_address: String,
     withdraw_amount: String,
 }
 
@@ -68,16 +72,20 @@ pub async fn estimate_fee(
         withdraw_amount,
     } = request;
 
-    let (transaction, key) =
-        if let Some(data) = state.db.find_by_mint_address(&mint_address).await.unwrap() {
-            data
-        } else {
-            // Document not found
-            return Json(EstimateFeeResponse::Error {
-                status: "error".to_string(),
-                message: format!("Mint address not found: {mint_address}"),
-            });
-        };
+    let (transaction, key) = if let Some(data) = state
+        .db
+        .find_by_mint_address(&mint_address.to_string())
+        .await
+        .unwrap()
+    {
+        data
+    } else {
+        // Document not found
+        return Json(EstimateFeeResponse::Error {
+            status: "error".to_string(),
+            message: format!("Mint address not found: {mint_address}"),
+        });
+    };
 
     info!("transaction: {:#?}", &transaction);
     info!("key: {:#?}", &key);

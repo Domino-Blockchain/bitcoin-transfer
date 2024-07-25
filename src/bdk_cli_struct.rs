@@ -234,7 +234,7 @@ impl BdkCli {
                     self.cli_path.as_ref(),
                 )
                 .await;
-                info!("sync output: {:?}", sync_output);
+                info!("sync output: {sync_output:?}");
                 info!("sync took: {:?}", start_sync.elapsed());
 
                 // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 get_balance | jq
@@ -299,6 +299,11 @@ impl BdkCli {
                     }
                     Err(output) => {
                         let stderr = String::from_utf8_lossy(&output.stderr);
+
+                        if stderr.contains("Output below the dust limit") {
+                            return Err("Output below the dust limit");
+                        }
+
                         // Insufficient funds: 5000 sat available of 5147 sat needed
                         let pattern = " sat available of ";
                         let (before, after) = stderr.split_once(pattern).unwrap();

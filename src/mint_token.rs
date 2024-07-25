@@ -6,7 +6,7 @@ use domichain_program::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::spl_token;
+use crate::spl_token::spl_token;
 
 pub fn get_account_address(token_address: Pubkey) -> Pubkey {
     // DWallet: 5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ
@@ -67,14 +67,6 @@ pub struct MintTokenRequest {
 pub async fn mint_token(Json(request): Json<MintTokenRequest>) -> Json<MintTokenResult> {
     let MintTokenRequest { amount, address } = request;
     Json(mint_token_inner(&amount, &address).await.unwrap())
-}
-
-pub fn tokens_to_ui_amount(amount: u64, decimals: u32) -> f64 {
-    if amount == 0 {
-        return 0.0;
-    }
-    let divisor = 10u64.checked_pow(decimals).unwrap();
-    amount as f64 / divisor as f64
 }
 
 #[derive(Serialize, Deserialize, Debug)]

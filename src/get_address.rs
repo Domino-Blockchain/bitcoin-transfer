@@ -9,7 +9,7 @@ use tokio::fs::read_to_string;
 use tracing::info;
 
 use crate::{
-    bdk_cli_struct::BdkCli, serde_convert, watch_addresses::watch_address, AppState, Args,
+    bdk_cli_struct::BdkCli, utils::serde_convert, watch_addresses::watch_address, AppState, Args
 };
 
 /*
@@ -143,7 +143,7 @@ pub async fn get_address_from_db(
 
     let address = new_multisig_address(&state, request.domi_address).await;
 
-    let _h = tokio::spawn(watch_address(
+    let _watch_handle = tokio::spawn(watch_address(
         address.clone(),
         state.db.clone(),
         btc_network,

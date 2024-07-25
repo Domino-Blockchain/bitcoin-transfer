@@ -2,9 +2,11 @@ use std::{str::FromStr, time::Duration};
 
 use domichain_sdk::{pubkey::Pubkey, signature::Signature};
 use reqwest::Url;
-use serde::{de, Deserialize, Deserializer};
+use serde::{de, Deserialize};
 use serde_json::{json, Value};
 use tokio::time::sleep;
+
+use crate::utils::from_str;
 
 #[allow(dead_code)]
 #[derive(Deserialize)]
@@ -29,16 +31,6 @@ pub async fn get_block_height(rpc_url: Url) -> u64 {
         .unwrap();
     let res: GetBlockHeightResp = res.json().await.unwrap();
     res.result
-}
-
-pub fn from_str<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: FromStr,
-    <T as FromStr>::Err: std::fmt::Display,
-{
-    let s = String::deserialize(deserializer)?;
-    T::from_str(&s).map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug)]

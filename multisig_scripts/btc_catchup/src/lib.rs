@@ -30,7 +30,7 @@ pub struct CatchupData {
     btc_address_to_domi_mints: HashMap<String, Vec<Pubkey>>,
 }
 
-pub async fn get_catchup_data(
+async fn test_get_catchup_data(
     spl_token_program_id: Pubkey,
     service_address: Pubkey,
     btc_addresses: Vec<BtcAddress>,
@@ -59,7 +59,6 @@ pub async fn get_catchup_data(
     }
 }
 
-#[allow(dead_code)]
 pub async fn do_catchup(
     all_btc_transactions: Vec<BtcTransaction>,
     mut all_domi_transactions: Vec<DomiTransaction>,
@@ -139,7 +138,12 @@ async fn test_do_catchup() {
     let spl_token_program_id =
         Pubkey::from_str("BTCi9FUjBVY3BSaqjzfhEPKVExuvarj8Gtfn4rJ5soLC").unwrap();
     let service_address = Pubkey::from_str("4qovDeQM5kG2z9EZJQ6s93f8yak6VKrHyxWMjZva2daE").unwrap();
-    do_catchup(
+
+    let CatchupData {
+        all_btc_transactions,
+        all_domi_transactions,
+        btc_address_to_domi_mints,
+    } = test_get_catchup_data(
         spl_token_program_id,
         service_address,
         vec![
@@ -161,6 +165,12 @@ async fn test_do_catchup() {
             "bc1qkyat094k65ff3m0w2mtq6zltcsqyw2kjpu8gha8kafhk40zpxh3snydsjw".to_string(),
             "bc1q5x6mwk6mrj8757u6pmhlwf0fqt5j6mpapdhx86rnayd6rmda026szr96ay".to_string(),
         ],
+    )
+    .await;
+    do_catchup(
+        all_btc_transactions,
+        all_domi_transactions,
+        btc_address_to_domi_mints,
     )
     .await;
 }
