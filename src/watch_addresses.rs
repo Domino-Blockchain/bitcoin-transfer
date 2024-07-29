@@ -191,7 +191,7 @@ pub async fn process_confirmed_transaction(db: &DB, multi_address: &str, confirm
 
     // Get TX output and value in sat
     let vout = confirmed.vout;
-    // Transaction have only one our multisig address in output
+    // Check that transaction have only one our multisig address in output
     let mut vouts = vout
         .iter()
         .filter(|dest| dest.scriptpubkey_address == multi_address);
