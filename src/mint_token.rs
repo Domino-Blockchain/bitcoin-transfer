@@ -117,3 +117,7 @@ pub async fn mint_token_inner(amount: &str, address: &str) -> anyhow::Result<Min
         output: serde_json::to_value(out).unwrap(),
     })
 }
+
+pub async fn combined_mint_token_inner(amount: &str, address: &str) -> anyhow::Result<MintTokenResult> {
+    todo!()
+}

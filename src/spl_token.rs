@@ -1,5 +1,13 @@
+use std::path::Path;
 use std::process::Stdio;
 use std::str::FromStr;
+
+use domichain_sdk::pubkey::Pubkey;
+use domichain_sdk::signature::Signature;
+use reqwest::Url;
+use serde::Deserialize;
+
+use crate::utils::from_str;
 
 pub fn spl_token(args: &[&str]) -> serde_json::Value {
     // TODO: use spl-token library to create token
@@ -58,4 +66,50 @@ pub fn spl_token_plain(args: &[&str]) {
     if !stderr.is_empty() {
         println!("stderr = {}", String::from_utf8_lossy(&stderr));
     }
+}
+
+#[derive(Deserialize)]
+pub struct CombinedMintOutput {
+    status: String,
+    #[serde(deserialize_with = "from_str")]
+    mint: Pubkey,
+    #[serde(deserialize_with = "from_str")]
+    destination_account: Pubkey,
+    amount: u64,
+    #[serde(deserialize_with = "from_str")]
+    signature: Signature,
+}
+
+pub async fn combined_mint_cli(
+    spl_token_combined_mint_cli_path: &Path,
+    amount: u64,
+    destination_address: Pubkey,
+    token_program: Pubkey,
+    decimals: u8,
+    url: Url,
+    keypair: &Path,
+) -> CombinedMintOutput {
+    let output = tokio::process::Command::new(spl_token_combined_mint_cli_path)
+        .args(&[
+            "--amount",
+            &amount.to_string(),
+            "--destination-address",
+            &destination_address.to_string(),
+            "--token-program",
+            &token_program.to_string(),
+            "--decimals",
+            &decimals.to_string(),
+            "--url",
+            &url.to_string(),
+            "--keypair",
+            keypair.to_str().unwrap(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .await
+        .unwrap();
+    serde_json::from_slice(&output.stdout).unwrap()
 }

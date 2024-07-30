@@ -48,6 +48,10 @@ pub struct Args {
     #[arg(long, env = "DOMICHAIN_SERVICE_ADDRESS")]
     domichain_service_address: Pubkey,
 
+    /// Domichain service wallet keypair file
+    #[arg(long, env = "DOMICHAIN_SERVICE_KEYPAIR_PATH", value_parser=ArcPathValueParser)]
+    domichain_service_keypair_path: Arc<Path>,
+
     /// MongoDB URI
     #[arg(long, env = "MONGODB_URI")]
     mongodb_uri: String,
@@ -75,6 +79,10 @@ pub struct Args {
     /// Path to spl-token-cli
     #[arg(long, env = "SPL_TOKEN_CLI_PATH", value_parser=ArcPathValueParser)]
     spl_token_cli_path: Arc<Path>,
+
+    /// Path to spl-token-cli
+    #[arg(long, env = "SPL_TOKEN_COMBINED_MINT_CLI_PATH", value_parser=ArcPathValueParser)]
+    spl_token_combined_mint_cli_path: Arc<Path>,
 
     /// Domichain program ID of SPL token
     #[arg(long, env = "SPL_TOKEN_PROGRAM_ID")]
@@ -146,6 +154,7 @@ async fn main() {
     let Args {
         domichain_rpc_url: _,
         domichain_service_address,
+        domichain_service_keypair_path,
         mongodb_uri,
         mongodb_master_key_path,
         service_bind_address,
@@ -153,6 +162,7 @@ async fn main() {
         dry_run: _,
         skip_catchup,
         spl_token_cli_path,
+        spl_token_combined_mint_cli_path,
         spl_token_program_id,
         bdk_cli_path_default,
         bdk_cli_path_patched,
@@ -166,8 +176,10 @@ async fn main() {
     let service_allow_origin = service_allow_origin.clone();
     let service_bind_address = service_bind_address.clone();
 
+    assert!(domichain_service_keypair_path.exists());
     assert!(mongodb_master_key_path.exists());
     assert!(spl_token_cli_path.exists());
+    assert!(spl_token_combined_mint_cli_path.exists());
     assert!(bdk_cli_path_default.exists());
     assert!(bdk_cli_path_patched.exists());
     assert!(ledger_keys_path.exists());
