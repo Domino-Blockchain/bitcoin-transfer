@@ -5,7 +5,7 @@ use std::str::FromStr;
 use domichain_sdk::pubkey::Pubkey;
 use domichain_sdk::signature::Signature;
 use reqwest::Url;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::utils::from_str;
 
@@ -68,16 +68,16 @@ pub fn spl_token_plain(args: &[&str]) {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CombinedMintOutput {
-    status: String,
+    pub status: String,
     #[serde(deserialize_with = "from_str")]
-    mint: Pubkey,
+    pub mint: Pubkey,
     #[serde(deserialize_with = "from_str")]
-    destination_account: Pubkey,
-    amount: u64,
+    pub destination_account: Pubkey,
+    pub amount: u64,
     #[serde(deserialize_with = "from_str")]
-    signature: Signature,
+    pub signature: Signature,
 }
 
 pub async fn combined_mint_cli(
@@ -112,4 +112,33 @@ pub async fn combined_mint_cli(
         .await
         .unwrap();
     serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[tokio::test]
+async fn test_combined_mint_cli() {
+    use clap::Parser;
+
+    kms_sign::load_dotenv();
+    let v: Vec<String> = vec![];
+    let args = crate::Args::parse_from(v);
+    assert!(args.spl_token_combined_mint_cli_path.exists());
+
+    let amount = 1000;
+    let destination_address = "6pANXPdfVhnuAax5aZD9rRbgG2qhhjJqG1Dighrd3Vrv"
+        .parse()
+        .unwrap();
+    let decimals = 8;
+
+    dbg!(
+        combined_mint_cli(
+            &args.spl_token_combined_mint_cli_path,
+            amount,
+            destination_address,
+            args.spl_token_program_id,
+            decimals,
+            args.domichain_rpc_url,
+            &args.domichain_service_keypair_path,
+        )
+        .await
+    );
 }

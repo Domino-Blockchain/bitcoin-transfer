@@ -171,7 +171,7 @@ async fn main() {
         aws_access_key_id: _,
         aws_secret_access_key: _,
         aws_region: _,
-    } = &args;
+    } = args.clone();
 
     let service_allow_origin = service_allow_origin.clone();
     let service_bind_address = service_bind_address.clone();
@@ -186,7 +186,7 @@ async fn main() {
 
     debug!("starting");
 
-    let db = Arc::new(DB::new(mongodb_uri, mongodb_master_key_path).await);
+    let db = Arc::new(DB::new(&mongodb_uri, &mongodb_master_key_path).await);
 
     let all_multisig_addresses = db.get_all_multisig_addresses().await;
     info!("all_multisig_addresses = {:#?}", &all_multisig_addresses);
@@ -195,12 +195,14 @@ async fn main() {
         all_multisig_addresses.len()
     );
 
+    let app_state = AppState::new(db, args);
+
     if !skip_catchup {
         debug!("starting catchup");
         process_catchup(
-            db.clone(),
-            *spl_token_program_id,
-            *domichain_service_address,
+            &app_state,
+            spl_token_program_id,
+            domichain_service_address,
             &all_multisig_addresses,
         )
         .await;
@@ -208,8 +210,6 @@ async fn main() {
     } else {
         debug!("catchup skipped");
     }
-
-    let app_state = AppState::new(db, args);
 
     let app = Router::new()
         .route(

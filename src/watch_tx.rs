@@ -112,7 +112,7 @@ async fn process_confirmed(
     assert_eq!(res.upserted_id, None);
 
     // TODO: mint token
-    let mint_result = mint_token_inner(&value, domi_address).await.unwrap();
+    let mint_result = mint_token_inner(&state.config, &value, domi_address).await.unwrap();
     dbg!(&mint_result);
     let MintTokenResult {
         mint_address,

@@ -144,8 +144,8 @@ pub async fn get_address_from_db(
     let address = new_multisig_address(&state, request.domi_address).await;
 
     let _watch_handle = tokio::spawn(watch_address(
+        state,
         address.clone(),
-        state.db.clone(),
         btc_network,
     ));
 

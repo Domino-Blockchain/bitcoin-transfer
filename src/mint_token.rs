@@ -1,12 +1,15 @@
 use std::str::FromStr;
 
-use axum::Json;
+use axum::{extract::State, Json};
 use domichain_account_decoder::parse_token::token_amount_to_ui_amount;
 use domichain_program::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::spl_token::spl_token;
+use crate::{
+    spl_token::{combined_mint_cli, spl_token},
+    AppState, Args,
+};
 
 pub fn get_account_address(token_address: Pubkey) -> Pubkey {
     // DWallet: 5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ
@@ -64,9 +67,16 @@ pub struct MintTokenRequest {
     pub address: String,
 }
 
-pub async fn mint_token(Json(request): Json<MintTokenRequest>) -> Json<MintTokenResult> {
+pub async fn mint_token(
+    State(state): State<AppState>,
+    Json(request): Json<MintTokenRequest>,
+) -> Json<MintTokenResult> {
     let MintTokenRequest { amount, address } = request;
-    Json(mint_token_inner(&amount, &address).await.unwrap())
+    Json(
+        mint_token_inner(&state.config, &amount, &address)
+            .await
+            .unwrap(),
+    )
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -76,7 +86,24 @@ pub struct MintTokenResult {
     pub output: serde_json::Value,
 }
 
-pub async fn mint_token_inner(amount: &str, address: &str) -> anyhow::Result<MintTokenResult> {
+pub async fn mint_token_inner(
+    args: &Args,
+    amount: &str,
+    address: &str,
+) -> anyhow::Result<MintTokenResult> {
+    let use_combined_mint = true;
+    if use_combined_mint {
+        combined_mint_token_inner(args, amount, address).await
+    } else {
+        separate_mint_token_inner(args, amount, address).await
+    }
+}
+
+pub async fn separate_mint_token_inner(
+    _args: &Args,
+    amount: &str,
+    address: &str,
+) -> anyhow::Result<MintTokenResult> {
     let amount_satomis: u64 = amount.parse().unwrap();
     let ui_amount = token_amount_to_ui_amount(amount_satomis, 8);
     let amount_domis = ui_amount.ui_amount_string;
@@ -118,6 +145,31 @@ pub async fn mint_token_inner(amount: &str, address: &str) -> anyhow::Result<Min
     })
 }
 
-pub async fn combined_mint_token_inner(amount: &str, address: &str) -> anyhow::Result<MintTokenResult> {
-    todo!()
+pub async fn combined_mint_token_inner(
+    args: &Args,
+    amount: &str,
+    address: &str,
+) -> anyhow::Result<MintTokenResult> {
+    let amount = amount.parse().unwrap();
+    let destination_address = address.parse().unwrap();
+    let decimals = 8;
+
+    let output = combined_mint_cli(
+        &args.spl_token_combined_mint_cli_path,
+        amount,
+        destination_address,
+        args.spl_token_program_id,
+        decimals,
+        args.domichain_rpc_url.clone(),
+        &args.domichain_service_keypair_path,
+    )
+    .await;
+
+    let account_address = get_account_address(output.mint);
+
+    Ok(MintTokenResult {
+        mint_address: output.mint.to_string(),
+        account_address: account_address.to_string(),
+        output: serde_json::to_value(output).unwrap(),
+    })
 }

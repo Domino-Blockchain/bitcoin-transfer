@@ -1,6 +1,5 @@
 use std::{
     collections::HashSet,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -12,7 +11,7 @@ use tokio::time::{interval, sleep};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{error, info};
 
-use crate::{db::DB, mempool::get_mempool_ws_url, mint_token::mint_token_inner};
+use crate::{mempool::get_mempool_ws_url, mint_token::mint_token_inner, AppState};
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -32,7 +31,7 @@ const IGNORED_KEYS: &[&str] = &[
     "pong",
 ];
 
-pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitcoin::Network) {
+pub async fn watch_address(state: AppState, address: String, btc_network: bdk::bitcoin::Network) {
     let mut sleep_duration = Duration::from_secs(1);
     let mut last_sleep = Instant::now();
     let sleep_reset_interval = Duration::from_secs(10 * 60); // 10min
@@ -53,7 +52,7 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
 
     // Infinite loop to retry subscription on errors
     loop {
-        let db = db.clone();
+        let state = state.clone();
         let address_clone = address.clone();
         let address_clone_2 = address.clone();
         info!("Subscribing on {address}");
@@ -100,7 +99,7 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
             ws_read
                 .try_for_each(|msg| async {
                     match msg {
-                        Message::Text(msg) => handle_text_message(&db, &address, &msg).await,
+                        Message::Text(msg) => handle_text_message(&state, &address, &msg).await,
                         other => panic!("expected a text message but got {other:?}"),
                     }
                     Ok(())
@@ -120,7 +119,7 @@ pub async fn watch_address(address: String, db: Arc<DB>, btc_network: bdk::bitco
     }
 }
 
-pub async fn handle_text_message(db: &DB, address: &str, msg: &str) {
+pub async fn handle_text_message(state: &AppState, address: &str, msg: &str) {
     let mut msg_json: serde_json::Value = serde_json::from_str(msg).unwrap();
     let msg_object = msg_json.as_object_mut().unwrap();
     let keys: HashSet<_> = msg_object.keys().map(|s| s.to_string()).collect();
@@ -139,7 +138,7 @@ pub async fn handle_text_message(db: &DB, address: &str, msg: &str) {
         let confirmed = addresses[&address]["confirmed"].as_array().unwrap();
         if !confirmed.is_empty() {
             let confirmed_tx = serde_json::from_value(confirmed[0].clone()).unwrap();
-            process_confirmed_transaction(&db, &address, confirmed_tx).await;
+            process_confirmed_transaction(&state, &address, confirmed_tx).await;
 
             if confirmed.len() > 1 {
                 todo!("Confirmed TXs array have multiple entries");
@@ -172,7 +171,12 @@ pub struct Confirmed {
 }
 
 /// Find deposit amount and do the BTCi mint
-pub async fn process_confirmed_transaction(db: &DB, multi_address: &str, confirmed: Confirmed) {
+pub async fn process_confirmed_transaction(
+    state: &AppState,
+    multi_address: &str,
+    confirmed: Confirmed,
+) {
+    let db = &state.db;
     // Find corresponding DOMI address
     let data = db
         .find_by_deposit_address(multi_address)
@@ -216,7 +220,7 @@ pub async fn process_confirmed_transaction(db: &DB, multi_address: &str, confirm
     // - network issue
     // - insufficient balance
     // - address already exists
-    let mint_result = mint_token_inner(&value.to_string(), domi_address).await;
+    let mint_result = mint_token_inner(&state.config, &value.to_string(), domi_address).await;
     info!("mint_result: {mint_result:#?}");
     let mint_result = mint_result.unwrap();
 

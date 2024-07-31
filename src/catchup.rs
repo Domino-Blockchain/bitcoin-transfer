@@ -10,6 +10,7 @@ use tracing::warn;
 use crate::{
     db::DB,
     watch_addresses::{process_confirmed_transaction, Confirmed, Vin, VinPrevout, Vout},
+    AppState,
 };
 
 type BtcAddress = String;
@@ -51,7 +52,7 @@ pub async fn get_catchup_data(
 }
 
 pub async fn process_catchup(
-    db: Arc<DB>,
+    app_state: &AppState,
     spl_token_program_id: Pubkey,
     domichain_service_address: Pubkey,
     all_multisig_addresses: &[String],
@@ -61,7 +62,7 @@ pub async fn process_catchup(
         all_domi_transactions,
         btc_address_to_domi_mints,
     } = get_catchup_data(
-        db.clone(),
+        app_state.db.clone(),
         spl_token_program_id,
         domichain_service_address,
         all_multisig_addresses,
@@ -110,7 +111,7 @@ pub async fn process_catchup(
         };
         assert!(matches!(btc_tx.tx_type, BtcTransactionType::Deposit));
         let multisig_address = btc_tx.to_address;
-        process_confirmed_transaction(&db, &multisig_address, confirmed_tx).await;
+        process_confirmed_transaction(app_state, &multisig_address, confirmed_tx).await;
     }
 
     amount_mismatch.retain(|(btc_tx, _domi_tx)| {
