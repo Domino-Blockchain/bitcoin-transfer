@@ -63,7 +63,11 @@ pub async fn do_catchup(
     all_btc_transactions: Vec<BtcTransaction>,
     mut all_domi_transactions: Vec<DomiTransaction>,
     btc_address_to_domi_mints: HashMap<String, Vec<Pubkey>>,
-) -> (Vec<BtcTransaction>, Vec<(BtcTransaction, DomiMint)>) {
+) -> (
+    Vec<BtcTransaction>,
+    Vec<(BtcTransaction, DomiMint)>,
+    Vec<DomiTransaction>,
+) {
     // Now tracks only deposits and mints
 
     let mut missed_mints = Vec::new();
@@ -125,11 +129,8 @@ pub async fn do_catchup(
             }
         }
     }
-    assert!(
-        all_domi_transactions.is_empty(),
-        "No BTC transactions for these DOMI transactions: {all_domi_transactions:?}",
-    );
-    (missed_mints, amount_mismatch)
+    let unpaired_mints = all_domi_transactions;
+    (missed_mints, amount_mismatch, unpaired_mints)
 }
 
 #[tokio::test]
@@ -167,12 +168,15 @@ async fn test_do_catchup() {
         ],
     )
     .await;
-    do_catchup(
+    let (missed_mints, amount_mismatch, unpaired_mints) = do_catchup(
         all_btc_transactions,
         all_domi_transactions,
         btc_address_to_domi_mints,
     )
     .await;
+    assert!(missed_mints.is_empty());
+    assert!(amount_mismatch.is_empty());
+    assert!(unpaired_mints.is_empty());
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -8,13 +8,13 @@ use tracing::{debug, info};
 use crate::{
     bdk_cli_struct::BdkCli,
     mempool::{get_mempool_url, get_recommended_fee_rates, RecommendedFeesResp},
-    utils::{from_str, serde_convert},
+    utils::{serde_as_str, serde_convert},
     AppState, Args,
 };
 
 #[derive(Deserialize)]
 pub struct EstimateFeeRequest {
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     mint_address: Pubkey,
     /// BTC withdraw destination address
     withdraw_address: String,

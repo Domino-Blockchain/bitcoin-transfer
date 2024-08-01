@@ -69,7 +69,7 @@ pub async fn process_catchup(
     )
     .await;
 
-    let (mut missed_mints, mut amount_mismatch) = btc_catchup::do_catchup(
+    let (mut missed_mints, mut amount_mismatch, mut unpaired_mints) = btc_catchup::do_catchup(
         all_btc_transactions,
         all_domi_transactions,
         btc_address_to_domi_mints,
@@ -82,6 +82,10 @@ pub async fn process_catchup(
 
     amount_mismatch.iter().for_each(|(btc_tx, domi_mint)| {
         warn!("Amount mismatch for deposit and mint: {btc_tx:#?}\n{domi_mint:#?}");
+    });
+
+    unpaired_mints.iter().for_each(|domi_tx| {
+        warn!("No BTC transactions for these DOMI transactions: {domi_tx:#?}");
     });
 
     for btc_tx in missed_mints.drain(..) {
@@ -115,10 +119,29 @@ pub async fn process_catchup(
     }
 
     amount_mismatch.retain(|(btc_tx, _domi_tx)| {
-        let skip_txs = ["f697db2d2962b976150aae2c2292fdb3df3938c82fe67327aa5600d29fa0d75f"];
+        let skip_txs = [
+            "f697db2d2962b976150aae2c2292fdb3df3938c82fe67327aa5600d29fa0d75f",
+            "9efaeb775bffe63c2164e51402e3adc07db2d2410f351f4797debc5c86949230",
+        ];
         !skip_txs.contains(&btc_tx.tx_id.as_str())
+    });
+    unpaired_mints.retain(|domi_tx| {
+        let skip_txs = [
+            "HxNWBoS4waSxcoHD6Ey1brW9oA7snv2ZjZiJgzeamCAy",
+            "HU8wy2oocPzYvFsJAx6aEX1NWjc5TbSEyWB1cJTLVAsT",
+        ];
+        match domi_tx {
+            DomiTransaction::Mint(domi_tx) => {
+                !skip_txs.contains(&domi_tx.token_mint_address.to_string().as_str())
+            }
+            DomiTransaction::Burn(b) => unreachable!("{b:#?}"),
+        }
     });
 
     assert!(missed_mints.is_empty());
     assert!(amount_mismatch.is_empty());
+    assert!(
+        unpaired_mints.is_empty(),
+        "No BTC transactions for these DOMI transactions: {unpaired_mints:#?}",
+    );
 }

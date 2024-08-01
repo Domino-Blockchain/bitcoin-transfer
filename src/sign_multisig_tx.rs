@@ -19,27 +19,26 @@ use crate::{
     domichain::{get_block_height, get_transaction_poll, DomiTransactionInstructionInfo},
     estimate_fee::get_vbytes,
     mempool::{get_mempool_url, get_recommended_fee_rate},
-    mint_token::get_account_address,
-    spl_token::spl_token,
-    utils::{from_str, serde_convert},
+    mint_token::{burn_token_inner, get_account_address},
+    utils::{serde_as_str, serde_convert},
     AppState, Args,
 };
 
 #[derive(Deserialize)]
 pub struct SignMultisigTxRequest {
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     mint_address: Pubkey,
     /// BTC withdraw destination address
     withdraw_address: String,
     withdraw_amount: String,
     fee_rate: Option<serde_json::Number>,
     vbytes: Option<u64>,
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     domi_address: Pubkey,
     block_height: u64,
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     btci_tx_signature: Signature,
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     signature: Signature,
 }
 
@@ -54,7 +53,7 @@ pub async fn sign_multisig_tx(
         bdk_cli_path_patched,
         btc_network,
         ..
-    } = state.config;
+    } = state.config.clone();
 
     let temp_wallet_dir = None;
     let descriptor = None;
@@ -219,11 +218,7 @@ pub async fn sign_multisig_tx(
     let account_address = get_account_address(mint_address);
     info!("Burn system account_address: {account_address:?}");
     let amount_tokens: u64 = withdraw_amount.parse().unwrap();
-    let ui_amount = token_amount_to_ui_amount(amount_tokens, 8);
-    let burn_amount = ui_amount.ui_amount_string;
-    info!("Burn amount: {burn_amount}");
-    let burn_output = spl_token(&["burn", &account_address.to_string(), &burn_amount]);
-    info!("burn_output: {:#?}", &burn_output);
+    burn_token_inner(&state.config, mint_address, amount_tokens).await;
 
     let tx_id = cli
         .send(xpub_00, xpub_01, xpub_02, xpub_03, &thirdsig_psbt)

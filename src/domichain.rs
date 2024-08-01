@@ -6,7 +6,7 @@ use serde::{de, Deserialize};
 use serde_json::{json, Value};
 use tokio::time::sleep;
 
-use crate::utils::from_str;
+use crate::utils::serde_as_str;
 
 #[allow(dead_code)]
 #[derive(Deserialize)]
@@ -56,13 +56,13 @@ pub struct DomiTransactionMeta {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DomiTransactionInstructionInfo {
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     pub authority: Pubkey,
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     pub destination: Pubkey,
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     pub mint: Pubkey,
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     pub source: Pubkey,
     pub token_amount: Value,
 }
@@ -80,7 +80,7 @@ pub struct DomiTransactionInstructionParsed {
 pub struct DomiTransactionInstruction {
     pub parsed: DomiTransactionInstructionParsed,
     pub program: String,
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     pub program_id: Pubkey,
 }
 

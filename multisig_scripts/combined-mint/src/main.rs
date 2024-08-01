@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use domichain_client::nonblocking::rpc_client::RpcClient;
 use domichain_sdk::{
     commitment_config::CommitmentConfig, program_pack::Pack, pubkey::Pubkey, signature::Keypair,
@@ -12,10 +12,24 @@ use spl_token_client::{
     token::Token,
 };
 
-/// Simple program to mint and transfer tokens in a single transaction
+/// Simple program to mint and burn tokens in a single transaction
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
+#[command(propagate_version = true)]
 struct Args {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Mint and transfer tokens in a single transaction
+    Mint(MintArgs),
+    Burn(BurnArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct MintArgs {
     /// Amount of tokens to mint
     #[arg(long)]
     amount: u64,
@@ -28,6 +42,7 @@ struct Args {
     #[arg(long)]
     token_program: Pubkey,
 
+    /// SPL Token decimals
     #[arg(long)]
     decimals: u8,
 
@@ -40,26 +55,72 @@ struct Args {
     keypair: PathBuf,
 }
 
+#[derive(clap::Args, Debug)]
+struct BurnArgs {
+    /// Amount of tokens to mint
+    #[arg(long)]
+    amount: u64,
+
+    /// Program ID: {spl_token, spl_token_btci, spl_token_usdt}::id()
+    #[arg(long)]
+    token_program: Pubkey,
+
+    /// SPL Token decimals
+    #[arg(long)]
+    decimals: u8,
+
+    /// URL for Domichain's JSON RPC
+    #[arg(long)]
+    url: String,
+
+    /// Filepath to a keypair
+    #[arg(long)]
+    keypair: PathBuf,
+
+    #[arg(long)]
+    mint_address: Pubkey,
+
+    #[arg(long)]
+    token_account_address: Pubkey,
+}
+
 /*
-cargo run -- \
+cargo run -r -- mint \
     --amount 10 \
     --destination-address $(domichain-keygen pubkey test_key.json) \
     --token-program BTCi9FUjBVY3BSaqjzfhEPKVExuvarj8Gtfn4rJ5soLC \
     --decimals 8 \
-    --url http://127.0.0.1:8899 \
+    --url https://api.testnet.domichain.io \
     --keypair /home/domi/.config/domichain/id.json
+
+cargo run -r -- burn \
+    --amount 1 \
+    --token-program BTCi9FUjBVY3BSaqjzfhEPKVExuvarj8Gtfn4rJ5soLC \
+    --decimals 8 \
+    --url https://api.testnet.domichain.io \
+    --keypair test_key.json \
+    --mint-address HU8wy2oocPzYvFsJAx6aEX1NWjc5TbSEyWB1cJTLVAsT \
+    --token-account-address 6f8umNr1GWsyZ3x71N7TPP5itS827i7pGSbHNWJSEqP2
 */
 
 #[tokio::main]
 async fn main() {
-    let Args {
+    let args = Args::parse();
+    match args.command {
+        Command::Mint(args) => mint(args).await,
+        Command::Burn(args) => burn(args).await,
+    };
+}
+
+async fn mint(args: MintArgs) {
+    let MintArgs {
         amount,
         destination_address,
         token_program,
         decimals,
         url,
         keypair,
-    } = Args::parse();
+    } = args;
 
     // let token_program = id();
     // let url = "http://127.0.0.1:8899".to_string();
@@ -211,4 +272,80 @@ async fn combined_flow(
         "signature": signature.to_string(),
     });
     println!("{}", serde_json::to_string_pretty(&output).unwrap());
+}
+
+async fn burn(args: BurnArgs) {
+    let BurnArgs {
+        amount,
+        token_program,
+        decimals,
+        url,
+        keypair,
+        mint_address,
+        token_account_address,
+    } = args;
+
+    let client = Arc::new(RpcClient::new_with_commitment(
+        url,
+        CommitmentConfig::confirmed(),
+    ));
+    let rpc_client = Arc::new(ProgramRpcClient::new(
+        client.clone(),
+        ProgramRpcClientSendTransaction,
+    ));
+
+    let id_raw = tokio::fs::read_to_string(keypair).await.unwrap();
+    let id_bytes: Vec<u8> = serde_json::from_str(&id_raw).unwrap();
+    let payer = Arc::new(Keypair::from_bytes(&id_bytes).unwrap());
+
+    let token_client = Token::new(
+        rpc_client,
+        &token_program,
+        &mint_address,
+        Some(decimals),
+        payer.clone(),
+    );
+
+    let authority = payer.pubkey();
+
+    let signing_keypairs = &[payer.as_ref()];
+
+    let res = token_client
+        .burn(&token_account_address, &authority, amount, signing_keypairs)
+        .await
+        .unwrap();
+    let signature = match res {
+        RpcClientResponse::Signature(signature) => signature,
+        RpcClientResponse::Transaction(tx) => unreachable!("{tx:?}"),
+    };
+
+    let output = serde_json::json!({
+        "status": "ok",
+        "mint": mint_address.to_string(),
+        "token_account": token_account_address.to_string(),
+        "amount": amount,
+        "signature": signature.to_string(),
+    });
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+}
+
+#[tokio::test]
+async fn test_burn() {
+    burn(BurnArgs {
+        amount: 1,
+        token_program: "BTCi9FUjBVY3BSaqjzfhEPKVExuvarj8Gtfn4rJ5soLC"
+            .parse()
+            .unwrap(),
+        decimals: 8,
+        url: "https://api.testnet.domichain.io/".to_string(),
+        keypair: "/home/btc-transfer/bitcoin-transfer/multisig_scripts/combined-mint/test_key.json"
+            .into(),
+        mint_address: "HU8wy2oocPzYvFsJAx6aEX1NWjc5TbSEyWB1cJTLVAsT"
+            .parse()
+            .unwrap(),
+        token_account_address: "6f8umNr1GWsyZ3x71N7TPP5itS827i7pGSbHNWJSEqP2"
+            .parse()
+            .unwrap(),
+    })
+    .await;
 }

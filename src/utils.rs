@@ -1,19 +1,32 @@
 use std::{
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
 };
 
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 
-pub fn from_str<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: FromStr,
-    <T as FromStr>::Err: std::fmt::Display,
-{
-    let s = String::deserialize(deserializer)?;
-    T::from_str(&s).map_err(serde::de::Error::custom)
+pub mod serde_as_str {
+    use std::str::FromStr;
+
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn deserialize<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: FromStr,
+        <T as FromStr>::Err: std::fmt::Display,
+    {
+        let s = String::deserialize(deserializer)?;
+        T::from_str(&s).map_err(serde::de::Error::custom)
+    }
+
+    pub fn serialize<T, S>(object: &T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: ToString,
+    {
+        serializer.serialize_str(&object.to_string())
+    }
 }
 
 pub fn serde_convert<F, T>(a: F) -> T

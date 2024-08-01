@@ -7,7 +7,7 @@ use domichain_sdk::signature::Signature;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::from_str;
+use crate::utils::serde_as_str;
 
 pub fn spl_token(args: &[&str]) -> serde_json::Value {
     // TODO: use spl-token library to create token
@@ -71,12 +71,12 @@ pub fn spl_token_plain(args: &[&str]) {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CombinedMintOutput {
     pub status: String,
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     pub mint: Pubkey,
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     pub destination_account: Pubkey,
     pub amount: u64,
-    #[serde(deserialize_with = "from_str")]
+    #[serde(with = "serde_as_str")]
     pub signature: Signature,
 }
 
@@ -91,6 +91,7 @@ pub async fn combined_mint_cli(
 ) -> CombinedMintOutput {
     let output = tokio::process::Command::new(spl_token_combined_mint_cli_path)
         .args(&[
+            "mint",
             "--amount",
             &amount.to_string(),
             "--destination-address",
@@ -103,6 +104,56 @@ pub async fn combined_mint_cli(
             &url.to_string(),
             "--keypair",
             keypair.to_str().unwrap(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .await
+        .unwrap();
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CombinedBurnOutput {
+    pub status: String,
+    #[serde(with = "serde_as_str")]
+    pub mint: Pubkey,
+    #[serde(with = "serde_as_str")]
+    pub token_account: Pubkey,
+    pub amount: u64,
+    #[serde(with = "serde_as_str")]
+    pub signature: Signature,
+}
+
+pub async fn combined_burn_cli(
+    spl_token_combined_mint_cli_path: &Path,
+    amount: u64,
+    mint_address: Pubkey,
+    token_account_address: Pubkey,
+    token_program: Pubkey,
+    decimals: u8,
+    url: Url,
+    keypair: &Path,
+) -> CombinedBurnOutput {
+    let output = tokio::process::Command::new(spl_token_combined_mint_cli_path)
+        .args(&[
+            "burn",
+            "--amount",
+            &amount.to_string(),
+            "--token-program",
+            &token_program.to_string(),
+            "--decimals",
+            &decimals.to_string(),
+            "--url",
+            &url.to_string(),
+            "--keypair",
+            keypair.to_str().unwrap(),
+            "--mint-address",
+            &mint_address.to_string(),
+            "--token-account-address",
+            &token_account_address.to_string(),
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
