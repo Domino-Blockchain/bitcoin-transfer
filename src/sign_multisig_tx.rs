@@ -15,7 +15,7 @@ use crate::{
     bdk_cli::{
         bdk_cli, bdk_cli_wallet, bdk_cli_wallet_patched, bdk_cli_wallet_temp, WALLET_DIR_PERMIT,
     },
-    bdk_cli_struct::BdkCli,
+    bdk_cli_struct::{BdkCli, OnesigOutput},
     domichain::{get_block_height, get_transaction_poll, DomiTransactionInstructionInfo},
     estimate_fee::get_vbytes,
     mempool::{get_mempool_url, get_recommended_fee_rate},
@@ -113,7 +113,7 @@ pub async fn sign_multisig_tx(
         // block_height is invalid
         return Json(json!({
             "status": "error",
-            "message": format!("block_height is invalid"),
+            "message": "block_height is invalid".to_string(),
         }));
     }
 
@@ -132,8 +132,8 @@ pub async fn sign_multisig_tx(
         }));
     };
 
-    info!("transaction: {:#?}", &transaction);
-    info!("key: {:#?}", &key);
+    info!("transaction: {transaction:#?}");
+    info!("key: {key:#?}");
     let _transaction: serde_json::Value = serde_convert(&transaction);
     let key: serde_json::Value = serde_convert(&key);
 
@@ -173,11 +173,20 @@ pub async fn sign_multisig_tx(
         get_recommended_fee_rate(btc_network).await
     };
 
-    let (onesig_psbt, fee) = cli
+    let OnesigOutput { onesig_psbt, fee } = match cli
         .onesig(
             xprv_00, xpub_01, xpub_02, xpub_03, to_address, amount, fee_rate,
         )
-        .await;
+        .await
+    {
+        Ok(output) => output,
+        Err(onesig_error) => {
+            return Json(json!({
+                "status": "error",
+                "message": format!("error on creating BTC signature: {onesig_error}"),
+            }));
+        }
+    };
     // let onesig_psbt = onesig(&descriptor_00, xpub_01, xpub_02, to_address, amount).await;
     info!("onesig_psbt: {:#?}", &onesig_psbt);
 
