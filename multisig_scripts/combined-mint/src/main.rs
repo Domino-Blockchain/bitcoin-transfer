@@ -26,6 +26,7 @@ enum Command {
     /// Mint and transfer tokens in a single transaction
     Mint(MintArgs),
     Burn(BurnArgs),
+    Transfer(TransferArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -84,6 +85,38 @@ struct BurnArgs {
     token_account_address: Pubkey,
 }
 
+#[derive(clap::Args, Debug)]
+struct TransferArgs {
+    /// Amount of tokens to mint
+    #[arg(long)]
+    amount: u64,
+
+    /// Program ID: {spl_token, spl_token_btci, spl_token_usdt}::id()
+    #[arg(long)]
+    token_program: Pubkey,
+
+    /// SPL Token decimals
+    #[arg(long)]
+    decimals: u8,
+
+    /// URL for Domichain's JSON RPC
+    #[arg(long)]
+    url: String,
+
+    /// Filepath to a keypair
+    #[arg(long)]
+    keypair: PathBuf,
+
+    #[arg(long)]
+    mint_address: Pubkey,
+
+    #[arg(long)]
+    token_account_address: Pubkey,
+
+    #[arg(long)]
+    destination_token_account_address: Pubkey,
+}
+
 /*
 cargo run -r -- mint \
     --amount 10 \
@@ -109,6 +142,7 @@ async fn main() {
     match args.command {
         Command::Mint(args) => mint(args).await,
         Command::Burn(args) => burn(args).await,
+        Command::Transfer(args) => transfer(args).await,
     };
 }
 
@@ -323,6 +357,66 @@ async fn burn(args: BurnArgs) {
         "status": "ok",
         "mint": mint_address.to_string(),
         "token_account": token_account_address.to_string(),
+        "amount": amount,
+        "signature": signature.to_string(),
+    });
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+}
+
+async fn transfer(args: TransferArgs) {
+    let TransferArgs {
+        amount,
+        token_program,
+        decimals,
+        url,
+        keypair,
+        mint_address,
+        token_account_address,
+        destination_token_account_address,
+    } = args;
+
+    let client = Arc::new(RpcClient::new_with_commitment(
+        url,
+        CommitmentConfig::confirmed(),
+    ));
+    let rpc_client = Arc::new(ProgramRpcClient::new(
+        client.clone(),
+        ProgramRpcClientSendTransaction,
+    ));
+
+    let id_raw = tokio::fs::read_to_string(keypair).await.unwrap();
+    let id_bytes: Vec<u8> = serde_json::from_str(&id_raw).unwrap();
+    let payer = Arc::new(Keypair::from_bytes(&id_bytes).unwrap());
+
+    let token_client = Token::new(
+        rpc_client,
+        &token_program,
+        &mint_address,
+        Some(decimals),
+        payer.clone(),
+    );
+
+    let authority = payer.pubkey();
+
+    let signing_keypairs = &[payer.as_ref()];
+
+    let source = token_account_address;
+    let destination = destination_token_account_address;
+
+    let res = token_client
+        .transfer(&source, &destination, &authority, amount, signing_keypairs)
+        .await
+        .unwrap();
+    let signature = match res {
+        RpcClientResponse::Signature(signature) => signature,
+        RpcClientResponse::Transaction(tx) => unreachable!("{tx:?}"),
+    };
+
+    let output = serde_json::json!({
+        "status": "ok",
+        "mint": mint_address.to_string(),
+        "token_account": token_account_address.to_string(),
+        "destination_token_account": destination_token_account_address.to_string(),
         "amount": amount,
         "signature": signature.to_string(),
     });
