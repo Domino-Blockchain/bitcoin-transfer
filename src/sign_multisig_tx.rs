@@ -2,14 +2,13 @@ use std::str::FromStr;
 
 use axum::{extract::State, Json};
 use bdk::FeeRate;
-use domichain_account_decoder::parse_token::token_amount_to_ui_amount;
 use domichain_program::pubkey::Pubkey;
 use domichain_sdk::signature::Signature;
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::fs::remove_dir_all;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::{
     bdk_cli::{
@@ -24,7 +23,7 @@ use crate::{
     AppState, Args,
 };
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct SignMultisigTxRequest {
     #[serde(with = "serde_as_str")]
     mint_address: Pubkey,
@@ -42,10 +41,55 @@ pub struct SignMultisigTxRequest {
     signature: Signature,
 }
 
+/// Wrapper to check for errors and return BTCi to the user
 pub async fn sign_multisig_tx(
     State(state): State<AppState>,
     Json(request): Json<SignMultisigTxRequest>,
 ) -> Json<serde_json::Value> {
+    // Separate thread to catch any errors
+    let task_handler = tokio::spawn(sign_multisig_tx_inner(
+        State(state.clone()),
+        Json(request.clone()),
+    ));
+    let task_result = task_handler.await;
+
+    let final_result = match task_result {
+        Ok(task_result) => match task_result {
+            Ok(mut output) => {
+                output["status"] = "ok".into();
+                Ok(output)
+            }
+            Err(task_error_message) => Err(task_error_message),
+        },
+        Err(thread_error) => {
+            // Internal log of panic message
+            error!("sign_multisig_tx: sending thread panicked: {thread_error:#?}");
+            Err("Internal service error. Try again later".to_string())
+        }
+    };
+
+    Json(match final_result {
+        Ok(output) => output,
+        Err(error_message) => {
+            // Send BTCi back in case of error
+            refund_user(state, request).await;
+            json!({
+                "status": "error",
+                "message": error_message,
+            })
+        }
+    })
+}
+
+pub async fn refund_user(state: AppState, request: SignMultisigTxRequest) {
+    todo!()
+}
+
+/// Sends BTC multisig transaction and burns BTCi
+pub async fn sign_multisig_tx_inner(
+    State(state): State<AppState>,
+    Json(request): Json<SignMultisigTxRequest>,
+) -> Result<serde_json::Value, String> {
     let Args {
         domichain_rpc_url,
         spl_token_program_id,
@@ -66,13 +110,11 @@ pub async fn sign_multisig_tx(
     )
     .await;
 
+    // Verifications
     if let Err(verify_error) =
         verify_request_signature(&domichain_rpc_url, spl_token_program_id, &request).await
     {
-        return Json(json!({
-            "status": "error",
-            "message": format!("verification is failed: {verify_error}"),
-        }));
+        return Err(format!("verification is failed: {verify_error}"));
     }
 
     let SignMultisigTxRequest {
@@ -91,18 +133,14 @@ pub async fn sign_multisig_tx(
     match bdk::bitcoin::Address::from_str(&withdraw_address) {
         Err(error) => {
             // withdraw_address is invalid
-            return Json(json!({
-                "status": "error",
-                "message": format!("withdraw_address is invalid: {error}"),
-            }));
+            return Err(format!("withdraw_address is invalid: {error}"));
         }
         Ok(address) => {
             if !address.is_valid_for_network(btc_network) {
                 // withdraw_address is invalid for currnet network
-                return Json(json!({
-                    "status": "error",
-                    "message": format!("withdraw_address is invalid for '{btc_network}' network"),
-                }));
+                return Err(format!(
+                    "withdraw_address is invalid for '{btc_network}' network"
+                ));
             }
         }
     }
@@ -111,10 +149,7 @@ pub async fn sign_multisig_tx(
     let block_height_diff = actual_block_height.checked_sub(block_height);
     if !matches!(block_height_diff, Some(0..=20)) {
         // block_height is invalid
-        return Json(json!({
-            "status": "error",
-            "message": format!("block_height is invalid"),
-        }));
+        return Err(format!("block_height is invalid"));
     }
 
     let (transaction, key) = if let Some(data) = state
@@ -126,10 +161,7 @@ pub async fn sign_multisig_tx(
         data
     } else {
         // Document not found
-        return Json(json!({
-            "status": "error",
-            "message": format!("Mint address not found: {mint_address}"),
-        }));
+        return Err(format!("Mint address not found: {mint_address}"));
     };
 
     info!("transaction: {:#?}", &transaction);
@@ -140,6 +172,8 @@ pub async fn sign_multisig_tx(
     // Check that witdraw destination is not one of ours BTC multisig addresses
     let known_multisig_addresses = state.db.get_all_multisig_addresses().await;
     assert!(!known_multisig_addresses.contains(&withdraw_address));
+
+    // Starting preparing BTC multisig transaction
 
     // TODO: get fields from meta
 
@@ -189,10 +223,7 @@ pub async fn sign_multisig_tx(
         );
 
         if actual_vbytes != expected_vbytes {
-            return Json(json!({
-                "status": "error",
-                "message": format!("vbytes is different from expected: expected {expected_vbytes}, found {actual_vbytes}"),
-            }));
+            return Err(format!("vbytes is different from expected: expected {expected_vbytes}, found {actual_vbytes}"));
         }
     }
 
@@ -215,10 +246,14 @@ pub async fn sign_multisig_tx(
         .await;
     info!("thirdsig_psbt: {:#?}", &thirdsig_psbt);
 
+    // Burning BTCi
+
     let account_address = get_account_address(mint_address);
     info!("Burn system account_address: {account_address:?}");
     let amount_tokens: u64 = withdraw_amount.parse().unwrap();
     burn_token_inner(&state.config, mint_address, amount_tokens).await;
+
+    // Sending prepared BTC multisig transaction
 
     let tx_id = cli
         .send(xpub_00, xpub_01, xpub_02, xpub_03, &thirdsig_psbt)
@@ -226,11 +261,9 @@ pub async fn sign_multisig_tx(
     // let tx_id = send(&multi_descriptor_01, &secondsig_psbt).await;
 
     let mempool_url = get_mempool_url(btc_network);
-
     let tx_link = format!("{mempool_url}/tx/{tx_id}");
     info!("transaction sent: {tx_link}");
-    Json(json!({
-        "status": "ok",
+    Ok(json!({
         "thirdsig_psbt": thirdsig_psbt,
         "tx_id": tx_id,
         "tx_link": tx_link,
@@ -364,6 +397,7 @@ fn test_verify_request_signature() {
     assert!(!signature.verify(domi_address.as_ref(), request_body_str_wrong.as_bytes()));
 }
 
+#[allow(dead_code)]
 pub async fn onesig(
     descriptor_00: &str,
     xpub_01: &str,
@@ -416,6 +450,7 @@ pub async fn onesig(
     onesig_psbt
 }
 
+#[allow(dead_code)]
 pub async fn secondsig(
     xpub_00: &str,
     xpub_01: &str,
@@ -452,6 +487,7 @@ pub async fn secondsig(
     (secondsig_psbt.to_string(), multi_descriptor_01)
 }
 
+#[allow(dead_code)]
 pub async fn send(multi_descriptor_01: &str, secondsig_psbt: &str) -> String {
     // # broadcast
     // export TX_ID=$(bdk-cli wallet --wallet wallet_name_msd01 --descriptor $MULTI_DESCRIPTOR_01 broadcast --psbt $SECONDSIG_PSBT)

@@ -67,6 +67,7 @@ pub struct MintTokenRequest {
     pub address: String,
 }
 
+#[allow(dead_code)]
 pub async fn mint_token(
     State(state): State<AppState>,
     Json(request): Json<MintTokenRequest>,
