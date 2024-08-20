@@ -148,11 +148,7 @@ pub async fn sign_multisig_tx_inner(
     let actual_block_height = get_block_height(domichain_rpc_url).await;
     let block_height_diff = actual_block_height.checked_sub(block_height);
     if !matches!(block_height_diff, Some(0..=20)) {
-        // block_height is invalid
-        return Json(json!({
-            "status": "error",
-            "message": "block_height is invalid".to_string(),
-        }));
+        return Err("block_height is invalid".to_string());
     }
 
     let (transaction, key) = if let Some(data) = state
@@ -218,10 +214,7 @@ pub async fn sign_multisig_tx_inner(
     {
         Ok(output) => output,
         Err(onesig_error) => {
-            return Json(json!({
-                "status": "error",
-                "message": format!("error on creating BTC signature: {onesig_error}"),
-            }));
+            return Err(format!("error on creating BTC signature: {onesig_error}"));
         }
     };
     // let onesig_psbt = onesig(&descriptor_00, xpub_01, xpub_02, to_address, amount).await;
