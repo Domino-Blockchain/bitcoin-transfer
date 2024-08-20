@@ -339,7 +339,7 @@ impl BdkCli {
         to_address: &str,
         amount: &str,
         fee_rate: FeeRate,
-    ) -> (String, u64) {
+    ) -> Result<OnesigOutput, &'static str> {
         let multi_descriptor_00 = self
             .get_multi_descriptor(xprv_00, xpub_01, xpub_02, xpub_03)
             .await;
@@ -366,16 +366,23 @@ impl BdkCli {
                 .await;
                 info!("get_balance_result: {get_balance_result:?}");
 
-                let confirmed = get_balance_result["satoshi"]["confirmed"]
-                    .as_number()
-                    .unwrap()
-                    .as_u64()
-                    .unwrap();
+                let balance: GetBalanceOutput =
+                    serde_json::from_value(get_balance_result["satoshi"].clone()).unwrap();
+
+                let prev_tx_in_process = balance.immature > 0 || balance.trusted_pending > 0 || balance.untrusted_pending > 0;
+                
+                let confirmed = balance.confirmed;
                 if confirmed == 0 {
+                    if prev_tx_in_process {
+                        return Err("Previous transaction if not confirmed yet. Confirmed balance is zero");
+                    }
                     return Err("Confirmed balance is zero");
                 }
                 let amount: u64 = amount.parse().unwrap();
                 if amount > confirmed {
+                    if prev_tx_in_process {
+                        return Err("Previous transaction if not confirmed yet. Confirmed balance less than withdraw amount");
+                    }
                     return Err("Confirmed balance less than withdraw amount");
                 }
 
@@ -480,11 +487,11 @@ impl BdkCli {
                 .await;
                 let onesig_psbt = onesig_psbt_["psbt"].as_str().unwrap().to_string();
 
-                Ok((onesig_psbt, fee))
+                Ok(OnesigOutput { onesig_psbt, fee })
             })
             .await;
 
-        onesig_result.unwrap()
+        onesig_result
     }
 
     pub async fn secondsig(
@@ -657,4 +664,18 @@ struct GenerateKeyInnerResult {
 struct GetPubkeyInnerResult {
     pub xprv: String,
     pub xpub: String,
+}
+
+#[derive(Debug)]
+pub struct OnesigOutput {
+    pub onesig_psbt: String,
+    pub fee: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetBalanceOutput {
+    pub confirmed: u64,
+    pub immature: u64,
+    pub trusted_pending: u64,
+    pub untrusted_pending: u64,
 }
