@@ -54,16 +54,16 @@ pub async fn sign_multisig_tx(
     let task_result = task_handler.await;
 
     let final_result = match task_result {
-        Ok(task_result) => match task_result {
+        Ok(withdraw_result) => match withdraw_result {
             Ok(mut output) => {
                 output["status"] = "ok".into();
                 Ok(output)
             }
-            Err(task_error_message) => Err(task_error_message),
+            Err(withdraw_error_message) => Err(withdraw_error_message),
         },
-        Err(thread_error) => {
+        Err(task_error) => {
             // Internal log of panic message
-            error!("sign_multisig_tx: sending thread panicked: {thread_error:#?}");
+            error!("sign_multisig_tx: sending thread panicked: {task_error:#?}");
             Err("Internal service error. Try again later".to_string())
         }
     };
