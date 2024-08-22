@@ -359,7 +359,10 @@ impl DB {
             .find_one(Some(doc! {"tx_hash": new_tx_hash}), None)
             .await
             .unwrap();
-        assert_eq!(existing_tx, None);
+        assert_eq!(
+            existing_tx, None,
+            "Trying to insert duplicate transaction: exisitng = {existing_tx:#?}, new = {insert:#?}",
+        );
 
         self.transactions_collection.insert_one(insert, None).await
     }

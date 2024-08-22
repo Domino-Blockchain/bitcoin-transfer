@@ -136,7 +136,7 @@ pub async fn get_address(address: &str) -> Result<Address, reqwest::Error> {
 
 /// See: https://mempool.space/docs/api/rest#get-address-transactions
 pub async fn get_address_txs_chain(address: &str) -> Result<Vec<Transaction>, reqwest::Error> {
-    let use_timeout = true;
+    let use_timeout = false;
     let use_sleep = false;
 
     // let mut sleep_duration = Duration::from_secs(1);
