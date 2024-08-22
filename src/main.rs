@@ -22,14 +22,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::http::{self, HeaderValue, Method};
-use axum::routing::post;
-use axum::Router;
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use catchup::process_catchup;
 use clap::Parser;
 use db::DB;
 use domichain_program::pubkey::Pubkey;
 use kms_sign::load_dotenv;
 use reqwest::Url;
+use serde_json::json;
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
 use tracing_subscriber::layer::SubscriberExt;
@@ -221,6 +222,7 @@ async fn main() {
             "/sign_multisig_tx",
             post(sign_multisig_tx::sign_multisig_tx),
         )
+        .route("/health", get(health))
         .layer(
             CorsLayer::new()
                 .allow_origin(service_allow_origin)
@@ -234,4 +236,8 @@ async fn main() {
         .unwrap();
     info!("listening on http://{}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn health() -> Json<serde_json::Value> {
+    Json(json!({ "status": "ok" }))
 }
