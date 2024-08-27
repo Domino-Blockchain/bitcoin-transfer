@@ -18,7 +18,9 @@ use crate::{
     domichain::{get_block_height, get_transaction_poll, DomiTransactionInstructionInfo},
     estimate_fee::get_vbytes,
     mempool::{get_mempool_url, get_recommended_fee_rate},
-    mint_token::{burn_token_inner, get_account_address},
+    mint_token::{
+        burn_token_inner, get_account_address, get_user_account_address, transfer_token_inner,
+    },
     utils::{serde_as_str, serde_convert},
     AppState, Args,
 };
@@ -72,17 +74,53 @@ pub async fn sign_multisig_tx(
         Ok(output) => output,
         Err(error_message) => {
             // Send BTCi back in case of error
-            refund_user(state, request).await;
-            json!({
-                "status": "error",
-                "message": error_message,
-            })
+            if let Err(refund_err) = refund_user(state, request).await {
+                json!({
+                    "status": "error",
+                    "message": format!("original error: {error_message}; refund error: {refund_err}"),
+                })
+            } else {
+                json!({
+                    "status": "error",
+                    "message": error_message,
+                })
+            }
         }
     })
 }
 
-pub async fn refund_user(state: AppState, request: SignMultisigTxRequest) {
-    todo!()
+pub async fn refund_user(state: AppState, request: SignMultisigTxRequest) -> Result<(), String> {
+    let Args {
+        domichain_rpc_url,
+        spl_token_program_id,
+        ..
+    } = state.config.clone();
+
+    // Verifications
+    if let Err(verify_error) =
+        verify_request_signature(&domichain_rpc_url, spl_token_program_id, &request).await
+    {
+        return Err(format!("refund: verification is failed: {verify_error}"));
+    }
+
+    let SignMultisigTxRequest {
+        mint_address,
+        withdraw_amount,
+        domi_address,
+        ..
+    } = request;
+
+    let amount_tokens: u64 = withdraw_amount.parse().unwrap();
+    let destination_token_account_address = get_user_account_address(mint_address, domi_address);
+    transfer_token_inner(
+        &state.config,
+        mint_address,
+        amount_tokens,
+        destination_token_account_address,
+    )
+    .await;
+
+    Ok(())
 }
 
 /// Sends BTC multisig transaction and burns BTCi
@@ -170,7 +208,9 @@ pub async fn sign_multisig_tx_inner(
 
     // Check that witdraw destination is not one of ours BTC multisig addresses
     let known_multisig_addresses = state.db.get_all_multisig_addresses().await;
-    assert!(!known_multisig_addresses.contains(&withdraw_address));
+    if known_multisig_addresses.contains(&withdraw_address) {
+        return Err("Withdraw address could not be internal address".to_string());
+    }
 
     // Starting preparing BTC multisig transaction
 

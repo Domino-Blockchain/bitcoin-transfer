@@ -165,6 +165,61 @@ pub async fn combined_burn_cli(
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CombinedTransferOutput {
+    pub status: String,
+    #[serde(with = "serde_as_str")]
+    pub mint: Pubkey,
+    #[serde(with = "serde_as_str")]
+    pub token_account: Pubkey,
+    #[serde(with = "serde_as_str")]
+    pub destination_token_account: Pubkey,
+    pub amount: u64,
+    #[serde(with = "serde_as_str")]
+    pub signature: Signature,
+}
+
+pub async fn combined_transfer_cli(
+    spl_token_combined_mint_cli_path: &Path,
+    amount: u64,
+    mint_address: Pubkey,
+    token_account_address: Pubkey,
+    destination_token_account_address: Pubkey,
+    token_program: Pubkey,
+    decimals: u8,
+    url: Url,
+    keypair: &Path,
+) -> CombinedTransferOutput {
+    let output = tokio::process::Command::new(spl_token_combined_mint_cli_path)
+        .args(&[
+            "transfer",
+            "--amount",
+            &amount.to_string(),
+            "--token-program",
+            &token_program.to_string(),
+            "--decimals",
+            &decimals.to_string(),
+            "--url",
+            &url.to_string(),
+            "--keypair",
+            keypair.to_str().unwrap(),
+            "--mint-address",
+            &mint_address.to_string(),
+            "--token-account-address",
+            &token_account_address.to_string(),
+            "--destination-token-account-address",
+            &destination_token_account_address.to_string(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .await
+        .unwrap();
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
 #[tokio::test]
 async fn test_combined_mint_cli() {
     use clap::Parser;

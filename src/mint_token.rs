@@ -7,10 +7,11 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
-    spl_token::{combined_burn_cli, combined_mint_cli, spl_token},
+    spl_token::{combined_burn_cli, combined_mint_cli, combined_transfer_cli, spl_token},
     AppState, Args,
 };
 
+/// Get service token account address
 pub fn get_account_address(token_address: Pubkey) -> Pubkey {
     // DWallet: 5PCWRXtMhen9ipbq4QeeAuDgFymGachUf7ozA3NJwHDJ
 
@@ -38,6 +39,25 @@ pub fn get_account_address(token_address: Pubkey) -> Pubkey {
 
     let (pubkey, _bump_seed) = Pubkey::find_program_address(
         &[owner.as_ref(), token_program_id.as_ref(), mint.as_ref()],
+        &associated_token_program_id,
+    );
+    pubkey
+}
+
+/// Get user token account address
+pub fn get_user_account_address(token_address: Pubkey, user: Pubkey) -> Pubkey {
+    let token_program_id_string = std::env::var("SPL_TOKEN_PROGRAM_ID").unwrap();
+    let token_program_id = Pubkey::from_str(&token_program_id_string).unwrap();
+
+    let associated_token_program_id =
+        Pubkey::from_str("Dt8fRCpjeV6JDemhPmtcTKijgKdPxXHn9Wo9cXY5agtG").unwrap();
+
+    let (pubkey, _bump_seed) = Pubkey::find_program_address(
+        &[
+            user.as_ref(),
+            token_program_id.as_ref(),
+            token_address.as_ref(),
+        ],
         &associated_token_program_id,
     );
     pubkey
@@ -202,4 +222,29 @@ pub async fn burn_token_inner(args: &Args, mint_address: Pubkey, amount: u64) {
         let burn_output = spl_token(&["burn", &token_account_address.to_string(), &burn_amount]);
         info!("burn_output: {burn_output:#?}");
     }
+}
+
+pub async fn transfer_token_inner(
+    args: &Args,
+    mint_address: Pubkey,
+    amount: u64,
+    destination: Pubkey,
+) {
+    let decimals = 8;
+    let token_account_address = get_account_address(mint_address);
+    info!("Transfer amount integer: {amount}");
+    let transfer_output = combined_transfer_cli(
+        &args.spl_token_combined_mint_cli_path,
+        amount,
+        mint_address,
+        token_account_address,
+        destination,
+        args.spl_token_program_id,
+        decimals,
+        args.domichain_rpc_url.clone(),
+        &args.domichain_service_keypair_path,
+    )
+    .await;
+    info!("transfer_output: {transfer_output:#?}");
+    assert_eq!(&transfer_output.status, "ok");
 }

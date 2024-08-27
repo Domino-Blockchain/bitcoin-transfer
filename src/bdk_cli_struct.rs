@@ -1,6 +1,7 @@
 use std::{borrow::Cow, path::Path, sync::Arc, time::Instant};
 
 use bdk::{bitcoin::Network, FeeRate};
+use cached::{proc_macro::cached, Return, TimedCache};
 use futures::Future;
 use serde::{Deserialize, Serialize};
 use serde_json::from_value;
@@ -227,15 +228,12 @@ impl BdkCli {
         let estimate_fee_result = self
             .with_temp_wallet_dir(|| async {
                 // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sync
-                let start_sync = Instant::now();
-                let sync_output = exec_with_json_output(
-                    self.wallet_args_online(&multi_descriptor_00, &["sync"])
-                        .iter(),
-                    self.cli_path.as_ref(),
-                )
-                .await;
+                let Return {
+                    was_cached,
+                    value: sync_output,
+                } = execute_wallet_sync(&self, multi_descriptor_00).await;
+                info!("sync was_cached: {was_cached:?}");
                 info!("sync output: {sync_output:?}");
-                info!("sync took: {:?}", start_sync.elapsed());
 
                 // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 get_balance | jq
                 let get_balance_result = exec_with_json_output(
@@ -678,4 +676,24 @@ struct GetBalanceOutput {
     pub immature: u64,
     pub trusted_pending: u64,
     pub untrusted_pending: u64,
+}
+
+#[cached(
+    sync_writes = true,
+    with_cached_flag = true,
+    ty = "TimedCache<String, Return<serde_json::Value>>",
+    create = "{ TimedCache::with_lifespan(60) }",
+    convert = r#"{ multi_descriptor_00.to_string() }"#
+)]
+async fn execute_wallet_sync(cli: &BdkCli, multi_descriptor_00: &str) -> Return<serde_json::Value> {
+    // bdk-cli wallet --wallet wallet_name_msd00 --descriptor $MULTI_DESCRIPTOR_00 sync
+    let start_sync = Instant::now();
+    let sync_output = exec_with_json_output(
+        cli.wallet_args_online(multi_descriptor_00, &["sync"])
+            .iter(),
+        cli.cli_path.as_ref(),
+    )
+    .await;
+    info!("sync took: {:?}", start_sync.elapsed());
+    Return::new(sync_output)
 }
