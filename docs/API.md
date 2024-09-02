@@ -10,7 +10,11 @@ RESPONSE:
 
 ### Get multisig address:
 ```
-POST /get_address_from_db {domi_address: string} -> string
+POST /get_address_from_db
+{ domi_address: string }
+
+SUCCESS RESPONSE:
+string
 ```
 
 ### Get estimated fee of BTC transaction:
