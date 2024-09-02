@@ -84,6 +84,8 @@ cat ledger_keys.json
 
 ```sh
 cargo run --release --bin bitcoin_transfer >> ~/btc_logs.txt 2>&1
+# OR
+cargo run --release --bin bitcoin_transfer -- --skip-catchup >> ~/btc_logs.txt 2>&1
 ```
 
 - [API docs](https://github.com/Domino-Blockchain/bitcoin-transfer/blob/main/docs/API.md)
