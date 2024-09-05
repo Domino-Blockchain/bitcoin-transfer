@@ -1,0 +1,17 @@
+[Unit]
+Description=BTC Bridge service unit file
+After=mongod.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=btc-transfer
+Group=btc-transfer
+WorkingDirectory=/home/btc-transfer/bitcoin-transfer
+ExecStart=/usr/bin/env bash /home/btc-transfer/bitcoin-transfer/start.sh
+StandardOutput=syslog
+StandardError=syslog
+
+[Install]
+WantedBy=multi-user.target
